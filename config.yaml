@@ -1,0 +1,14 @@
+##### PREPROCESS STEP ######
+DATA_DIR: "/var" # Path somewhere to store temporary files
+DEM_FOLDER: "/Users/ricky/Desktop/MAC/MAC/DEM" # Path to folder containing DEMs to use
+BUFFER_FILES: false # Whether to buffer dem files, useful when stitching multiple floodmaps
+  DEM_NAME: "DR_full" # Name representing these DEM files
+STREAM_NETWORK_FOLDER: "/Users/ricky/Desktop/MAC/MAC/StreamlineShapefile" # Path to folder containing stream centerline files
+FLOWFILE: "/Users/ricky/Desktop/MAC/MAC/FlowFile/DR_DEM_FULL_Flow_COMID_Q.txt" # Filepath which has an ID column, a flow column, and optionall a base flow column
+  ID_COLUMN: "DR_full" # Column name in the flow file that represents the IDs of the streams
+  FLOW_COLUMN: "DR_Histori" # Column name in the flow file that represents the flow of the streams. If blank, all columns besides the ID column will be used
+
+LAND_USE_FOLDER: "/Users/ricky/Desktop/MAC/MAC/LAND" # Path to folder containing land use files; optional
+
+###### AUTOROUTE ######
+
