@@ -4,5 +4,8 @@ import sys
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(project_root)
 
-from autoroute.autoroute import AutoRouteHandler
-AutoRouteHandler.run("/Users/ricky/autoroute-manager/config.yaml")
+if __name__ == '__main__':
+    from autoroute.autoroute import AutoRouteHandler
+    ah = AutoRouteHandler("/Users/ricky/autoroute-manager/config.yaml")
+    ah.run()
+    
