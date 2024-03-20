@@ -1,14 +1,22 @@
 ##### PREPROCESS STEP ######
-DATA_DIR: "/var" # Path somewhere to store temporary files
+OVERWRITE: true # Whether to overwrite existing files
+DATA_DIR: "/Users/ricky/Desktop/ar_data" # Path somewhere to store temporary files
 DEM_FOLDER: "/Users/ricky/Desktop/MAC/MAC/DEM" # Path to folder containing DEMs to use
 BUFFER_FILES: false # Whether to buffer dem files, useful when stitching multiple floodmaps
-  DEM_NAME: "DR_full" # Name representing these DEM files
-STREAM_NETWORK_FOLDER: "/Users/ricky/Desktop/MAC/MAC/StreamlineShapefile" # Path to folder containing stream centerline files
+DEM_NAME: "DR_full" # Name representing these DEM files
+STREAM_NETWORK_FOLDER: "/Users/ricky/Downloads/streams_718" # Path to folder containing stream centerline files
+STREAM_NAME: "V2_streams" # Name representing the stream centerline files
+STREAM_ID: "LINKNO" # ID field in the stream centerline files
 FLOWFILE: "/Users/ricky/Desktop/MAC/MAC/FlowFile/DR_DEM_FULL_Flow_COMID_Q.txt" # Filepath which has an ID column, a flow column, and optionall a base flow column
-  ID_COLUMN: "DR_full" # Column name in the flow file that represents the IDs of the streams
-  FLOW_COLUMN: "DR_Histori" # Column name in the flow file that represents the flow of the streams. If blank, all columns besides the ID column will be used
-
+ID_COLUMN: "DR_full" # Column name in the flow file that represents the IDs of the streams
+FLOW_COLUMN: "DR_Histori" # Column name in the flow file that represents the flow of the streams. If blank, all columns besides the ID column will be used
+EXTENT: [] # Extent of the area to process, in the form [xmin, ymin, xmax, ymax]. If blank or empty, the extent of the DEM will be used
 LAND_USE_FOLDER: "/Users/ricky/Desktop/MAC/MAC/LAND" # Path to folder containing land use files; optional
 
 ###### AUTOROUTE ######
+AUTOROUTE: false # Whether to run autoroute
+AUTOROUTE_FOLDER: "/Users/ricky/Desktop/MAC/MAC/AutoRoute" # Path to folder containing autoroute files
+AUTOROUTE_FILE: "DR_full" # Name of the autoroute file
+AUTOROUTE_COLUMN: "DR_full" # Column name in the autoroute file that represents the IDs of the streams
+AUTOROUTE_FLOW_COLUMN: "DR_Histori" # Column name in the autoroute file that represents the flow of the streams. If blank, all columns besides the ID column will be used
 
