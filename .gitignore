@@ -1,1 +1,5 @@
 *__pycache__*
+/test_ar_data
+*.xml
+*.DS_Store
+*This is the*
