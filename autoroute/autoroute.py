@@ -10,58 +10,59 @@ import geopandas as gpd
 import pandas as pd
 import numpy as np
 import psutil
+import fiona
 import yaml
 from osgeo import gdal, osr
+from shapely.geometry import box
+from pyproj import Transformer
 
 # GDAL setups
 os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = 'TRUE' # Set to avoid reading really large folders
 os.environ["GDAL_NUM_THREADS"] = 'ALL_CPUS'
+gdal.UseExceptions()
 
 logging.basicConfig(level=logging.INFO,
                     stream=sys.stdout,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
+try:
+    import pyogrio
+    GPD_ENGINE = "pyogrio"
+    os.environ["PYOGRIO_USE_ARROW"] = "1"
+except ImportError:
+    GPD_ENGINE = "fiona"
+
+if gdal.GetDriverByName("Parquet") is not None:
+    # If gdal parquet library is installed, use it because its faster/better compression
+    GEOMETRY_SAVE_EXTENSION = "parquet"
+else:
+    GEOMETRY_SAVE_EXTENSION = "gpkg"
+
+
 class AutoRouteHandler:
     def __init__(self, 
-                 ) -> None:
-        self.setup()
+                 yaml: str) -> None:
+        """
+        yaml may be string or dictionary
+        """
+        self.setup(yaml)
 
-    def run(self, yaml_file: str) -> None:
-        # Read the yaml file and get variables out of it
-        self.DATA_DIR = ""
-        self.BUFFER_FILES = False
-        self.DEM_FOLDER = ""
-        self.DEM_NAME = ""
-        self.STREAM_NETWORK_FOLDER = ""
-        self.LAND_USE_FOLDER = ""
-        self.FLOWFILE = ""
-        self.ID_COLUMN = ""
-        self.FLOW_COLUMN = ""
-
-        with open(yaml_file, 'r') as f:
-            data = yaml.safe_load(f)
-            for key, value in data.items():
-                setattr(self, key, value)
-        self.DATA_DIR = ...
-        slurm_scripts = []
+    def run(self) -> None:
         if self.BUFFER_FILES:
             if not all({self.DEM_FOLDER, self.DEM_NAME, self.STREAM_NETWORK_FOLDER, self.LAND_USE_FOLDER, self.FLOWFILE, self.ID_COLUMN, self.FLOW_COLUMN}):
                 logging.error('You\'re missing some inputs for "Buffer Files"')
-                exit()
-            num_dems = self.find_number_of_dems_in_extent()
-            slurm_scripts.append("""#!/bin/bash --login
+                return
+            dems = self.find_dems_in_extent(self.EXTENT)
+        else:
+            dems = [os.path.join(self.DEM_FOLDER,f) for f in os.listdir(self.DEM_FOLDER) if f.lower().endswith(".tif")]
+        processes = min(len(dems), os.cpu_count())
+        if processes == 0:
+            logging.error('No dems found in the extent. Exiting...')
+            return
+        with multiprocessing.Pool(processes=processes) as pool:
+            pool.map(self.create_strm_file, dems)
 
-#SBATCH --time=0:15:00   # walltime, 4 min per dem
-#SBATCH --ntasks=10  # number of processor cores (i.e. tasks) - 30
-#SBATCH --nodes=1   # number of nodes
-#SBATCH --mem-per-cpu=3333M #memory per CPU core
-#SBATCH -J "buffering_files"   # job name
-
-mamba activate autoroute
-export OMP_NUM_THREADS=$SLURM_CPUS_ON_NODE
-""")
-            
-    def setup(self) -> None:
+    def setup(self, yaml_file) -> None:
         """
         Ensure working folder exists and set up. Each folder contains a folder based on the type of dem used and the stream network
         DATA_DIR
@@ -90,10 +91,34 @@ export OMP_NUM_THREADS=$SLURM_CPUS_ON_NODE
                 FABDEM__v1-1
                     - 1.txt
         """
-        if not DATA_DIR:
+        # Read the yaml file and get variables out of it
+        self.DATA_DIR = ""
+        self.BUFFER_FILES = False
+        self.DEM_FOLDER = ""
+        self.DEM_NAME = ""
+        self.STREAM_NETWORK_FOLDER = ""
+        self.LAND_USE_FOLDER = ""
+        self.FLOWFILE = ""
+        self.ID_COLUMN = ""
+        self.FLOW_COLUMN = ""
+        self.EXTENT = []
+        self.OVERWRITE = False
+        self.STREAM_NAME = ""
+        self.STREAM_ID = ""
+
+        if isinstance(yaml_file, dict):
+            for key, value in yaml_file.items():
+                setattr(self, key, value)
+        elif isinstance(yaml_file, str):
+            with open(yaml_file, 'r') as f:
+                data = yaml.safe_load(f)
+                for key, value in data.items():
+                    setattr(self, key, value)
+        if not self.DATA_DIR:
             logging.error('No working folder provided!')
-        os.makedirs(DATA_DIR, exist_ok = True)
-        os.chdir(DATA_DIR)
+            return
+        os.makedirs(self.DATA_DIR, exist_ok = True)
+        #os.chdir(self.DATA_DIR)
         with open('This is the working folder. Please delete and modify with caution.txt', 'a') as f:
             pass
 
@@ -105,18 +130,16 @@ export OMP_NUM_THREADS=$SLURM_CPUS_ON_NODE
         os.makedirs('vdts', exist_ok = True)
         os.makedirs('mifns', exist_ok = True)
         os.makedirs('stream_reference_files', exist_ok=True)
+        os.makedirs('tmp', exist_ok=True)
 
     def buffer(self) -> None:
         pass
 
     def find_dems_in_extent(self, 
-                            extent = EXTENT) -> list[str]:
-        dems = self.find_files(DEM_FOLDER)
+                            extent: list = None) -> list[str]:
+        dems = self.find_files(self.DEM_FOLDER)
         if extent:
-            if dem_file_pattern:
-                dems = [dem for dem in dems if self.is_in_extent_re(dem, extent)]
-            else:
-                dems = [dem for dem in dems if self.is_in_extent_gdal(dem, extent)]
+            dems = [dem for dem in dems if self.is_in_extent_gdal(dem, extent)]
         return dems
 
     def find_number_of_dems_in_extent(self) -> int:
@@ -128,29 +151,12 @@ export OMP_NUM_THREADS=$SLURM_CPUS_ON_NODE
         for root, _, _ in os.walk(directory):
             tif_files.extend(glob.glob(os.path.join(root, type)))
         return tif_files
-    
-    def is_in_extent_re(self, 
-                        dem: str,
-                        extent = EXTENT) -> bool:
-        minx1, miny1, maxx1, maxy1 = extent 
-        try:
-            if DEM_NAME == 'FABDEM': # We use FABDEM alot, thus it is built in
-                file_extent = [int(x[1:]) if x[0] in 'NE' else -int(x[1:]) for x in re.findall(dem_file_pattern, os.path.basename(dem))[0]]
-                file_extent.reverse()
-                file_extent += [file_extent[0] + 1, file_extent[1] + 1]
-                minx2, miny2, maxx2, maxy2 = file_extent
-                if (minx1 <= maxx2 and maxx1 >= minx2 and miny1 <= maxy2 and maxy1 >= miny2):
-                    return True
-                return False
-            else:
-                raise NotImplementedError()
-        except Exception as e:
-            logging.error(f"Bad dem file pattern! Error:\n{e}")
-            return False
 
     def is_in_extent_gdal(self, 
                           dem: str,
-                          extent=EXTENT) -> bool:
+                          extent: list = None) -> bool:
+        if extent is None:
+            return True
         ds = self.open_w_gdal(dem)
         if not ds: return False
 
@@ -196,9 +202,9 @@ export OMP_NUM_THREADS=$SLURM_CPUS_ON_NODE
             maxy = min(maxy, 90)
         # TODO figure out if gdal has errors for out of bounds projected units
 
-        os.makedirs(os.path.join(DATA_DIR, 'dems_buffered', DEM_NAME), exist_ok=True)
-        buffered_dem = os.path.join(DATA_DIR, 'dems_buffered', DEM_NAME, f"{str(round(minx, 3)).replace('.','_')}__{str(round(miny, 3)).replace('.','_')}__{str(round(maxx, 3)).replace('.','_')}__{str(round(maxy, 3)).replace('.','_')}.vrt")
-        if OVERWRITE and os.path.exists(buffered_dem):
+        os.makedirs(os.path.join(self.DATA_DIR, 'dems_buffered',self.DEM_NAME), exist_ok=True)
+        buffered_dem = os.path.join(self.DATA_DIR, 'dems_buffered', self.DEM_NAME, f"{str(round(minx, 3)).replace('.','_')}__{str(round(miny, 3)).replace('.','_')}__{str(round(maxx, 3)).replace('.','_')}__{str(round(maxy, 3)).replace('.','_')}.vrt")
+        if self.OVERWRITE and os.path.exists(buffered_dem):
             logging.info(f"{buffered_dem} already exists. Skipping...")
             return
 
@@ -262,104 +268,103 @@ export OMP_NUM_THREADS=$SLURM_CPUS_ON_NODE
         miny = maxy + geo[5] * ds.RasterYSize
         return minx, miny, maxx, maxy
     
+    def gpd_read(self, 
+                 path: str,
+                 bbox: box = None,
+                 columns = None,) -> gpd.GeoDataFrame:
+        """
+        Reads .parquet, .shp, .gpkg, and potentially others and returns in a way we expect.
+        """
+        global GPD_ENGINE
+        if path.endswith((".parquet", ".geoparquet")):
+            if columns:
+                df = gpd.read_parquet(path, columns=columns)
+            else:
+                df = gpd.read_parquet(path)
+            if bbox:
+                df = df[df.geometry.intersects(bbox)]
+        elif path.endswith((".shp", ".gpkg")):
+            if bbox:
+                df = gpd.read_file(path, bbox=bbox, engine=GPD_ENGINE)
+            else:
+                df = gpd.read_file(path, engine=GPD_ENGINE)
+            if columns:
+                df = df[columns]
+        else:
+            raise NotImplementedError(f"Unsupported file type: {path}")
+        return df
+            
     def create_strm_file(self, dem: str) -> None:
+        global GPD_ENGINE
+        global GEOMETRY_SAVE_EXTENSION
         ds = self.open_w_gdal(dem)
         if not ds: return
         projection = ds.GetProjection()
+        ds_epsg = int(ds.GetSpatialRef().GetAttrValue('AUTHORITY', 1))
 
-        strm = os.path.join(DATA_DIR, 'stream_files', f"{DEM_NAME}__{STREAM_NAME}")
+        strm = os.path.join(self.DATA_DIR, 'stream_files', f"{self.DEM_NAME}__{self.STREAM_NAME}")
         os.makedirs(strm, exist_ok=True)
         strm = os.path.join(strm, f"{os.path.basename(dem).split('.')[0]}__strm.tif")
-        if OVERWRITE and os.path.exists(strm):
+        if not self.OVERWRITE and not os.path.exists(strm):
             logging.info(f"{strm} already exists. Skipping...")
             return
-
-        strm_reference = os.path.join(DATA_DIR, 'stream_reference_files', f"{STREAM_NAME}_ref.parquet")
-        if not os.path.exists(strm_reference):
-            self.create_reference_file(strm_reference)
-
+        
         minx, miny, maxx, maxy = self.get_ds_extent(ds)
-        ref_df = pd.read_parquet(strm_reference)
-        ref_df = ref_df[
-            (ref_df['minx'] >= minx) & 
-            (ref_df['miny'] >= miny) &
-            (ref_df['maxx'] <= maxx) &
-            (ref_df['maxy'] <= maxy)
-        ]
-        if ref_df.empty:
-            logging.warning('No streams found in the DEM\'s extent!')
+        bbox = box(minx, miny, maxx, maxy)
+        filenames = [os.path.join(self.STREAM_NETWORK_FOLDER,f) for f in os.listdir(self.STREAM_NETWORK_FOLDER) if f.endswith(('.shp', '.gpkg', '.parquet', '.geoparquet'))]
+        if not filenames:
+            logging.warning(f"No stream files found in {self.STREAM_NETWORK_FOLDER}")
             return
-        
-        filenames = [os.path.join(STREAM_NETWORK_FOLDER, f) for f in np.unique(ref_df['filename'].values)]
-        ref_df = None
-        if len(filenames) > 1:
-            dfs = []
-            for f in filenames:
-                if os.path.basename(f).endswith(('.parquet', '.geoparquet')):
-                    dfs.append(gpd.read_parquet(f, columns=[ID_COLUMN, 'geometry']))
+        tmp_streams = os.path.join(self.DATA_DIR, 'tmp', f'temp.{GEOMETRY_SAVE_EXTENSION}')
+        try:
+            if filenames:
+                dfs = []
+                for f in filenames:
+                    with fiona.open(f, 'r') as src:
+                        crs = src.crs
+                    if ds_epsg != crs.to_epsg():
+                        transformer = Transformer.from_crs(f"EPSG:{ds_epsg}",crs.to_string(), always_xy=True) 
+                        minx2, miny2 = transformer.transform(minx, miny)
+                        maxx2, maxy2 =  transformer.transform(maxx, maxy)
+                        bbox = box(minx2, miny2, maxx2, maxy2)
+
+                    try:
+                        df = self.gpd_read(f, columns=[self.STREAM_ID, 'geometry'], bbox=bbox)
+                    except NotImplementedError:
+                        logging.warning(f"Skipping unsupported file: {f}")
+                        continue
+                    if not df.empty:
+                        dfs.append(df.to_crs(ds_epsg))
+                    else:
+                        logging.warning(f"No streams were found in {f}")
+                df = gpd.GeoDataFrame(pd.concat(dfs, ignore_index=True))
+                if GEOMETRY_SAVE_EXTENSION == "parquet":
+                    df.to_parquet(tmp_streams)
                 else:
-                    dfs.append(gpd.read_file(f))
-            pd.concat(dfs, ignore_index=True).to_file('temp.gpkg')
-            file = 'temp.gpkg'
-        else:
-            file = filenames[0]
-            if file.endswith('.parquet'):
-                gpd.read_parquet(file, columns=[ID_COLUMN, 'geometry']).to_file('temp.gpkg')
-                file = 'temp.gpkg'
-        
+                    df.to_file(tmp_streams)
+        except KeyError as e:
+            logging.error(f"{self.STREAM_ID} not found in the stream files here: {self.STREAM_NETWORK_FOLDER}")
 
-
-        options = gdal.RasterizeOptions(attribute=ID_COLUMN,
-                              outputType=gdal.GDT_UInt64,
+        options = gdal.RasterizeOptions(attribute=self.STREAM_ID,
+                              outputType=gdal.GDT_UInt64, # Assume no negative IDs
                               format='GTiff',
                               outputSRS=projection,
                               creationOptions=["COMPRESS=DEFLATE", "PREDICTOR=2"],
                               outputBounds=(minx, miny, maxx, maxy),
                               noData=0,
                               width=ds.RasterXSize,
-                              height=ds.RasterYSize)
-        gdal.Rasterize(strm, file, options=options)
-        2
-
-
-        
-        
-    def create_reference_file(self, output_ref_file: str):
-        # Each cpu needs 4x max memory of biggest file
-        stream_files = [f for f in self.find_files(STREAM_NETWORK_FOLDER, '*.*') if f.endswith(('.gpkg','.shp','.parquet'))]
-        if not stream_files:
-            logging.warning(f'No stream files found in {STREAM_NETWORK_FOLDER}')
-            exit()
-        biggest_file = os.path.getsize(max(stream_files, key = os.path.getsize))
-        available_memory = psutil.virtual_memory().total * 0.85 # Allow machine to consume 85% memory
-        processes = min(len(stream_files), multiprocessing.cpu_count(), available_memory // (biggest_file * 2))
-        worker_lists = self.list_to_sublists(stream_files, processes)
-        
-        with multiprocessing.Pool(processes=processes) as pool:
-            dfs = pool.map(self.reference_file_helper, worker_lists)
-        dfs = [d for sub in dfs for d in sub]
-        
-        pd.concat(dfs, ignore_index=True).to_parquet(output_ref_file)
+                              height=ds.RasterYSize,
+        )
+        gdal.Rasterize(strm, tmp_streams, options=options)
+        logging.debug(f"Rasterizing {dem} using {self.STREAM_NETWORK_FOLDER} to {strm}")
+        ds = None
             
-    def reference_file_helper(self,stream_files: list[str]) -> pd.DataFrame:
-        dfs = []
-        for strm in stream_files:
-            if os.path.basename(strm).endswith(('.parquet', '.geoparquet')):
-                df = gpd.read_parquet(strm, columns=[ID_COLUMN, 'geometry'])
-            else:
-                df = gpd.read_file(strm)
-            df['filename'] = os.path.basename(strm)
-            dfs.append(pd.concat([df[[ID_COLUMN, 'filename']], df.bounds], axis=1))
-        return dfs
 
     def list_to_sublists(self, alist: list[Any], n: int) -> list[list[Any]]:
         return [alist[x:x+n] for x in range(0, len(alist), n)]
         
-
 if __name__ == "__main__":
-    gdal.UseExceptions()
-    gpd.options.io_engine = "pyogrio"
-    os.environ["PYOGRIO_USE_ARROW"] = "1"
+    
     # args = sys.argv
     # if len(args) == 1:
     #     logging.info('No inputs given. Exiting...')
