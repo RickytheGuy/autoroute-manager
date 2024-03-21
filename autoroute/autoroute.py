@@ -4,7 +4,7 @@ import os
 import re
 import glob
 import multiprocessing
-from typing import Tuple, Any
+from typing import Tuple, Any, List
 
 import geopandas as gpd
 import pandas as pd
@@ -61,6 +61,7 @@ class AutoRouteHandler:
             return
         with multiprocessing.Pool(processes=processes) as pool:
             pool.map(self.create_strm_file, dems)
+            pool.map(self.create_row_col_id_file, dems)
 
     def setup(self, yaml_file) -> None:
         """
@@ -295,7 +296,6 @@ class AutoRouteHandler:
         return df
             
     def create_strm_file(self, dem: str) -> None:
-        global GPD_ENGINE
         global GEOMETRY_SAVE_EXTENSION
         ds = self.open_w_gdal(dem)
         if not ds: return
@@ -310,38 +310,39 @@ class AutoRouteHandler:
             return
         
         minx, miny, maxx, maxy = self.get_ds_extent(ds)
-        bbox = box(minx, miny, maxx, maxy)
+
         filenames = [os.path.join(self.STREAM_NETWORK_FOLDER,f) for f in os.listdir(self.STREAM_NETWORK_FOLDER) if f.endswith(('.shp', '.gpkg', '.parquet', '.geoparquet'))]
         if not filenames:
             logging.warning(f"No stream files found in {self.STREAM_NETWORK_FOLDER}")
             return
         tmp_streams = os.path.join(self.DATA_DIR, 'tmp', f'temp.{GEOMETRY_SAVE_EXTENSION}')
         try:
-            if filenames:
-                dfs = []
-                for f in filenames:
-                    with fiona.open(f, 'r') as src:
-                        crs = src.crs
-                    if ds_epsg != crs.to_epsg():
-                        transformer = Transformer.from_crs(f"EPSG:{ds_epsg}",crs.to_string(), always_xy=True) 
-                        minx2, miny2 = transformer.transform(minx, miny)
-                        maxx2, maxy2 =  transformer.transform(maxx, maxy)
-                        bbox = box(minx2, miny2, maxx2, maxy2)
-
-                    try:
-                        df = self.gpd_read(f, columns=[self.STREAM_ID, 'geometry'], bbox=bbox)
-                    except NotImplementedError:
-                        logging.warning(f"Skipping unsupported file: {f}")
-                        continue
-                    if not df.empty:
-                        dfs.append(df.to_crs(ds_epsg))
-                    else:
-                        logging.warning(f"No streams were found in {f}")
-                df = gpd.GeoDataFrame(pd.concat(dfs, ignore_index=True))
-                if GEOMETRY_SAVE_EXTENSION == "parquet":
-                    df.to_parquet(tmp_streams)
+            dfs = []
+            for f in filenames:
+                with fiona.open(f, 'r') as src:
+                    crs = src.crs
+                if ds_epsg != crs.to_epsg():
+                    transformer = Transformer.from_crs(f"EPSG:{ds_epsg}",crs.to_string(), always_xy=True) 
+                    minx2, miny2 = transformer.transform(minx, miny)
+                    maxx2, maxy2 =  transformer.transform(maxx, maxy)
+                    bbox = box(minx2, miny2, maxx2, maxy2)
                 else:
-                    df.to_file(tmp_streams)
+                    bbox = box(minx, miny, maxx, maxy)
+
+                try:
+                    df = self.gpd_read(f, columns=[self.STREAM_ID, 'geometry'], bbox=bbox)
+                except NotImplementedError:
+                    logging.warning(f"Skipping unsupported file: {f}")
+                    continue
+                if not df.empty:
+                    dfs.append(df.to_crs(ds_epsg))
+                else:
+                    logging.warning(f"No streams were found in {f}")
+            df = gpd.GeoDataFrame(pd.concat(dfs, ignore_index=True))
+            if GEOMETRY_SAVE_EXTENSION == "parquet":
+                df.to_parquet(tmp_streams)
+            else:
+                df.to_file(tmp_streams)
         except KeyError as e:
             logging.error(f"{self.STREAM_ID} not found in the stream files here: {self.STREAM_NETWORK_FOLDER}")
 
@@ -358,20 +359,11 @@ class AutoRouteHandler:
         gdal.Rasterize(strm, tmp_streams, options=options)
         logging.debug(f"Rasterizing {dem} using {self.STREAM_NETWORK_FOLDER} to {strm}")
         ds = None
-            
 
-    def list_to_sublists(self, alist: list[Any], n: int) -> list[list[Any]]:
+    def create_row_col_id_file(self, dem: str) -> None:
+        pass
+
+    def list_to_sublists(self, alist: List[Any], n: int) -> List[List[Any]]:
         return [alist[x:x+n] for x in range(0, len(alist), n)]
         
-if __name__ == "__main__":
-    
-    # args = sys.argv
-    # if len(args) == 1:
-    #     logging.info('No inputs given. Exiting...')
-    #     exit()
-    # mh = MasterHandler(mode=args[1])
-    mh = AutoRouteHandler()
-    #mh.buffer_dem('/home/lrr43/fsl_groups/grp_geoglows2/compute/fabdem/DEMs_for_Entire_World/N00E020-N10E030_FABDEM_V1-2/N00E022_FABDEM_V1-2.tif')
-    mh.create_strm_file('/home/lrr43/fsl_groups/grp_geoglows2/compute/fabdem/DEMs_for_Entire_World/N00E000-N10E010_FABDEM_V1-2/N00E006_FABDEM_V1-2.tif')
-    logging.info('Finished')
     

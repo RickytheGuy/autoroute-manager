@@ -30,7 +30,7 @@ class TestStreamRasterization(unittest.TestCase):
         out_ds = gdal.Open(output)
         self.assertIsNotNone(out_ds)
         val_ds = gdal.Open(validation)
-        self.assertTrue(np.count_nonzero(~(out_ds.ReadAsArray() == val_ds.ReadAsArray())) == 26, "Arrays are not equal") # Slightly different geometry, but we should get the same answer. Parquet tends to be more "correct" than gpkg
+        self.assertTrue(np.count_nonzero(~(out_ds.ReadAsArray() == val_ds.ReadAsArray())) <= 26, "Arrays are not equal") # Slightly different geometry, but we should get the same answer. Parquet tends to be more "correct" than gpkg
         self.assertEqual(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), "GeoTransform is not equal")
         self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
 
@@ -61,6 +61,21 @@ class TestStreamRasterization(unittest.TestCase):
         self.assertIsNotNone(out_ds)
         val_ds = gdal.Open(validation)
         self.assertTrue(np.array_equal(out_ds.ReadAsArray(), val_ds.ReadAsArray()), "Arrays are not equal")
+        self.assertEqual(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), "GeoTransform is not equal")
+        self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
+
+    def test_various_files_and_projections(self):
+        self.params["STREAM_NETWORK_FOLDER"] = "tests/test_data/streamlines/multiple_parquet_various"
+        output = "test_ar_data/stream_files/test_dem__test_strm/N18W073_FABDEM_V1-2__strm.tif"
+        validation = "tests/test_data/validation/rasterization/N18W073_FABDEM_V1-2__strm_val.tif"
+
+        AutoRouteHandler(self.params).run()
+
+        self.assertTrue(os.path.exists(output))
+        out_ds = gdal.Open(output)
+        self.assertIsNotNone(out_ds)
+        val_ds = gdal.Open(validation)
+        self.assertTrue(np.count_nonzero(~(out_ds.ReadAsArray() == val_ds.ReadAsArray())) <= 17, "Arrays are not equal") # Slightly different, due to gpkg again
         self.assertEqual(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), "GeoTransform is not equal")
         self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
 
