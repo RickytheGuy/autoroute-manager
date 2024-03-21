@@ -10,6 +10,7 @@ STREAM_ID: "LINKNO" # ID field in the stream centerline files
 FLOWFILE: "/Users/ricky/Desktop/MAC/MAC/FlowFile/DR_DEM_FULL_Flow_COMID_Q.txt" # Filepath which has an ID column, a flow column, and optionall a base flow column
 ID_COLUMN: "DR_full" # Column name in the flow file that represents the IDs of the streams
 FLOW_COLUMN: "DR_Histori" # Column name in the flow file that represents the flow of the streams. If blank, all columns besides the ID column will be used
+BASE_FLOW_COLUMN: "" # Column name in the flow file that represents the base flow of the streams. If blank, no other columns will be added. Ignored if FLOW_COLUMN is blank
 EXTENT: [] # Extent of the area to process, in the form [xmin, ymin, xmax, ymax]. If blank or empty, the extent of the DEM will be used
 LAND_USE_FOLDER: "/Users/ricky/Desktop/MAC/MAC/LAND" # Path to folder containing land use files; optional
 

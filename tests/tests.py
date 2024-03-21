@@ -3,6 +3,7 @@ import sys
 import unittest
 
 import numpy as np
+import pandas as pd
 from osgeo import gdal
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -79,6 +80,33 @@ class TestStreamRasterization(unittest.TestCase):
         self.assertEqual(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), "GeoTransform is not equal")
         self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
 
+class TestRowColIdFIle(unittest.TestCase):
+    def setUp(self) -> None:
+        self.params = {"OVERWRITE": True,
+              "DATA_DIR": "test_ar_data",
+              "DEM_FOLDER": "/Users/ricky/Desktop/MAC/MAC/DEM",
+              "BUFFER_FILES": False, 
+              "DEM_NAME": "test_dem", 
+              "STREAM_NETWORK_FOLDER": "/Users/ricky/Desktop/MAC/MAC/StreamlineShapefile", 
+              "STREAM_NAME": "test_strm", 
+              "STREAM_ID": "COMID",
+               "FLOWFILE":  "/Users/ricky/Desktop/MAC/MAC/FlowFile/DR_test.txt",
+               "ID_COLUMN": "COMID",
+               "FLOW_COLUMN": "DR_Histori",
+               "BASE_FLOW_COLUMN": "base"}
+        self.output = "test_ar_data/rapid_files/test_dem__test_strm/DR_DEM_FULL__strm__row_col_id.txt"
+        self.validation = "tests/test_data/validation/row_id_flow/Dr_test.txt"
+
+    def test_row_col_id_file(self):
+        # self.params["ROW_COL_ID_FILE"] = "tests/test_data/row_col_id/row_col_id.csv"
+        AutoRouteHandler(self.params).run()
+
+        self.assertTrue(os.path.exists(self.output))
+        out_df = pd.read_csv(self.output)
+        val_df = pd.read_csv(self.validation)
+        self.assertTrue(out_df.equals(val_df), "Dataframes are not equal")
+
+
+
 if __name__ == '__main__':
     unittest.main()
-    np.allclose

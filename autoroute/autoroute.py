@@ -54,14 +54,20 @@ class AutoRouteHandler:
                 return
             dems = self.find_dems_in_extent(self.EXTENT)
         else:
-            dems = [os.path.join(self.DEM_FOLDER,f) for f in os.listdir(self.DEM_FOLDER) if f.lower().endswith(".tif")]
+            dems = [os.path.join(self.DEM_FOLDER,f) for f in os.listdir(self.DEM_FOLDER) if f.lower().endswith((".tif", ".vrt"))]
         processes = min(len(dems), os.cpu_count())
         if processes == 0:
             logging.error('No dems found in the extent. Exiting...')
             return
+        
         with multiprocessing.Pool(processes=processes) as pool:
             pool.map(self.create_strm_file, dems)
-            pool.map(self.create_row_col_id_file, dems)
+
+            strms = glob.glob(os.path.join(self.DATA_DIR, 'stream_files', f"{self.DEM_NAME}__{self.STREAM_NAME}","*.tif"))
+            if len(strms) != len(dems):
+                logging.warning(f'Only {len(strms)} stream files were created out of {len(dems)} dems')
+            if self.FLOWFILE:
+                pool.map(self.create_row_col_id_file, strms)
 
     def setup(self, yaml_file) -> None:
         """
@@ -106,6 +112,7 @@ class AutoRouteHandler:
         self.OVERWRITE = False
         self.STREAM_NAME = ""
         self.STREAM_ID = ""
+        self.BASE_FLOW_COLUMN = ""
 
         if isinstance(yaml_file, dict):
             for key, value in yaml_file.items():
@@ -360,8 +367,56 @@ class AutoRouteHandler:
         logging.debug(f"Rasterizing {dem} using {self.STREAM_NETWORK_FOLDER} to {strm}")
         ds = None
 
-    def create_row_col_id_file(self, dem: str) -> None:
-        pass
+    def create_row_col_id_file(self, strm: str) -> None:
+        row_col_file = os.path.join(self.DATA_DIR, 'rapid_files', f"{self.DEM_NAME}__{self.STREAM_NAME}")
+        os.makedirs(row_col_file, exist_ok=True)
+        row_col_file = os.path.join(row_col_file, f"{os.path.basename(strm).split('.')[0]}__row_col_id.txt")
+        if not self.OVERWRITE and not os.path.exists(row_col_file):
+            logging.info(f"{row_col_file} already exists. Skipping...")
+            return
+
+        if self.FLOWFILE.endswith(('.csv', '.txt')):
+            df = (
+                pd.read_csv(self.FLOWFILE, sep=',')
+                .drop_duplicates(self.ID_COLUMN)
+                .dropna()
+            )
+            if self.ID_COLUMN not in df:
+                raise ValueError(f"The id field you've entered is not in the file\nids entered: {self.ID_COLUMN}, columns found: {list(df)}")
+            if not self.FLOW_COLUMN:
+                cols = df.columns
+            else:
+                if self.FLOW_COLUMN not in df.columns:
+                    raise ValueError(f"The flow field you've entered is not in the file\nflows entered: {self.FLOW_COLUMN}, columns found: {list(df)}")
+                cols = [self.ID_COLUMN, self.FLOW_COLUMN]
+                if self.BASE_FLOW_COLUMN:
+                    if self.BASE_FLOW_COLUMN not in df.columns:
+                        raise ValueError(f"The flow field you've entered is not in the file\nflows entered: {self.FLOW_COLUMN}, columns found: {list(df)}")
+                    cols.append(self.BASE_FLOW_COLUMN)
+                    
+            df = df[cols]
+        else:
+            raise NotImplementedError(f"Unsupported file type: {self.FLOWFILE}")
+                
+        # Now look through the Raster to find the appropriate Information and print to the FlowFile
+        ds = gdal.Open(strm)
+        data_array = ds.ReadAsArray()
+        ds = None
+
+        indices = np.where(data_array > 0)
+        values = data_array[indices]
+        matches = df[df[self.ID_COLUMN].isin(values)].shape[0]
+
+        if matches != df.shape[0]:
+            logging.warning(f"{matches} id(s) out of {df.shape[0]} from your input file are present in the stream raster...")
+        
+        (
+            pd.DataFrame({'ROW': indices[0], 'COL': indices[1], self.ID_COLUMN: values})
+            .merge(df, on=self.ID_COLUMN, how='left')
+            .fillna(0)
+            .to_csv(row_col_file, sep=" ", index=False)
+        )
+        logging.info("Finished stream file")
 
     def list_to_sublists(self, alist: List[Any], n: int) -> List[List[Any]]:
         return [alist[x:x+n] for x in range(0, len(alist), n)]
