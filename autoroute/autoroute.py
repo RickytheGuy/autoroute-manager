@@ -104,7 +104,7 @@ class AutoRouteHandler:
         self.DEM_FOLDER = ""
         self.DEM_NAME = ""
         self.STREAM_NETWORK_FOLDER = ""
-        self.LAND_USE_FOLDER = ""
+        self.LAND_USE_FOLDER = "" 
         self.FLOWFILE = ""
         self.ID_COLUMN = ""
         self.FLOW_COLUMN = ""
@@ -127,18 +127,18 @@ class AutoRouteHandler:
             return
         os.makedirs(self.DATA_DIR, exist_ok = True)
         #os.chdir(self.DATA_DIR)
-        with open('This is the working folder. Please delete and modify with caution.txt', 'a') as f:
+        with open(os.path.join(self.DATA_DIR,'This is the working folder. Please delete and modify with caution.txt'), 'a') as f:
             pass
 
-        os.makedirs('dems_buffered', exist_ok = True)
-        os.makedirs('stream_files', exist_ok = True)
-        os.makedirs('lu_bufferd', exist_ok = True)
-        os.makedirs('rapid_files', exist_ok = True)
-        os.makedirs('flow_files', exist_ok = True)
-        os.makedirs('vdts', exist_ok = True)
-        os.makedirs('mifns', exist_ok = True)
-        os.makedirs('stream_reference_files', exist_ok=True)
-        os.makedirs('tmp', exist_ok=True)
+        os.makedirs(os.path.join(self.DATA_DIR,'dems_buffered'), exist_ok = True)
+        os.makedirs(os.path.join(self.DATA_DIR,'stream_files'), exist_ok = True)
+        os.makedirs(os.path.join(self.DATA_DIR,'lu_bufferd'), exist_ok = True)
+        os.makedirs(os.path.join(self.DATA_DIR,'rapid_files'), exist_ok = True)
+        os.makedirs(os.path.join(self.DATA_DIR,'flow_files'), exist_ok = True)
+        os.makedirs(os.path.join(self.DATA_DIR,'vdts'), exist_ok = True)
+        os.makedirs(os.path.join(self.DATA_DIR,'mifns'), exist_ok = True)
+        os.makedirs(os.path.join(self.DATA_DIR,'stream_reference_files'), exist_ok=True)
+        os.makedirs(os.path.join(self.DATA_DIR,'tmp'), exist_ok=True)
 
     def buffer(self) -> None:
         pass
@@ -378,9 +378,14 @@ class AutoRouteHandler:
         if self.FLOWFILE.endswith(('.csv', '.txt')):
             df = (
                 pd.read_csv(self.FLOWFILE, sep=',')
-                .drop_duplicates(self.ID_COLUMN)
+                .drop_duplicates(self.ID_COLUMN if self.ID_COLUMN else None) 
                 .dropna()
             )
+            if df.empty:
+                logging.error(f"No data in the flow file: {self.FLOWFILE}")
+                return
+            if not self.ID_COLUMN:
+                self.ID_COLUMN =df.columns[0]
             if self.ID_COLUMN not in df:
                 raise ValueError(f"The id field you've entered is not in the file\nids entered: {self.ID_COLUMN}, columns found: {list(df)}")
             if not self.FLOW_COLUMN:

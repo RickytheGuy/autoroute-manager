@@ -98,7 +98,17 @@ class TestRowColIdFIle(unittest.TestCase):
         self.validation = "tests/test_data/validation/row_id_flow/Dr_test.txt"
 
     def test_row_col_id_file(self):
-        # self.params["ROW_COL_ID_FILE"] = "tests/test_data/row_col_id/row_col_id.csv"
+        AutoRouteHandler(self.params).run()
+
+        self.assertTrue(os.path.exists(self.output))
+        out_df = pd.read_csv(self.output)
+        val_df = pd.read_csv(self.validation)
+        self.assertTrue(out_df.equals(val_df), "Dataframes are not equal")
+
+    def test_row_col_id_file_no_inputs(self):
+        self.params["ID_COLUMN"] = ""
+        self.params["FLOW_COLUMN"] = ""
+        self.params["BASE_FLOW_COLUMN"] = ""
         AutoRouteHandler(self.params).run()
 
         self.assertTrue(os.path.exists(self.output))
