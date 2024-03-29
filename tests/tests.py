@@ -136,9 +136,9 @@ class TestLandUse(unittest.TestCase):
 
         if not os.path.exists(self.output):
             self.output = self.output.replace(".vrt", ".tif")
-        self.assertTrue(os.path.exists(self.output))
+        self.assertTrue(os.path.exists(self.output), "File does not exist")
         out_ds = gdal.Open(self.output)
-        self.assertIsNotNone(out_ds)
+        self.assertIsNotNone(out_ds, "Problem opening file")
         val_ds = gdal.Open(self.validation)
         self.assertTrue(np.array_equal(out_ds.ReadAsArray(), val_ds.ReadAsArray()), "Arrays are not equal")
         self.assertEqual(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), "GeoTransform is not equal")
@@ -151,9 +151,9 @@ class TestLandUse(unittest.TestCase):
 
         if not os.path.exists(self.output):
             self.output = self.output.replace(".vrt", ".tif")
-        self.assertTrue(os.path.exists(self.output))
+        self.assertTrue(os.path.exists(self.output), "File does not exist")
         out_ds = gdal.Open(self.output)
-        self.assertIsNotNone(out_ds)
+        self.assertIsNotNone(out_ds, "Problem opening file")
         val_ds = gdal.Open(self.validation)
         self.assertTrue(np.array_equal(out_ds.ReadAsArray(), val_ds.ReadAsArray()), "Arrays are not equal")
         self.assertEqual(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), "GeoTransform is not equal")
