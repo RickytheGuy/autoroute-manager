@@ -54,20 +54,24 @@ class AutoRouteHandler:
                 return
             dems = self.find_dems_in_extent(self.EXTENT)
         else:
-            dems = [os.path.join(self.DEM_FOLDER,f) for f in os.listdir(self.DEM_FOLDER) if f.lower().endswith((".tif", ".vrt"))]
+            if self.DEM_FOLDER:
+                dems = [os.path.join(self.DEM_FOLDER,f) for f in os.listdir(self.DEM_FOLDER) if f.lower().endswith((".tif", ".vrt"))]
+            else:
+                dems = []
         processes = min(len(dems), os.cpu_count())
-        if processes == 0:
-            logging.error('No dems found in the extent. Exiting...')
-            return
-        
-        with multiprocessing.Pool(processes=processes) as pool:
-            pool.map(self.create_strm_file, dems)
+        if processes > 0:
+            with multiprocessing.Pool(processes=processes) as pool:
+                if self.STREAM_NETWORK_FOLDER:
+                    pool.map(self.create_strm_file, dems)
+                if self.LAND_USE_FOLDER:
+                    pool.map(self.create_land_use, dems)
 
-            strms = glob.glob(os.path.join(self.DATA_DIR, 'stream_files', f"{self.DEM_NAME}__{self.STREAM_NAME}","*.tif"))
-            if len(strms) != len(dems):
-                logging.warning(f'Only {len(strms)} stream files were created out of {len(dems)} dems')
-            if self.FLOWFILE:
+        strms = glob.glob(os.path.join(self.DATA_DIR, 'stream_files', f"{self.DEM_NAME}__{self.STREAM_NAME}","*.tif"))
+        if strms and self.FLOWFILE:
+            processes = min(len(strms), os.cpu_count())
+            with multiprocessing.Pool(processes=processes) as pool:
                 pool.map(self.create_row_col_id_file, strms)
+        
 
     def setup(self, yaml_file) -> None:
         """
@@ -82,7 +86,7 @@ class AutoRouteHandler:
                 FABDEM__v1-1
                     - 1.tif
                     - 2.tif
-            lu_buffered
+            land_use
                 FABDEM__v1-1
                     - 1.tif
             rapid_files
@@ -132,7 +136,7 @@ class AutoRouteHandler:
 
         os.makedirs(os.path.join(self.DATA_DIR,'dems_buffered'), exist_ok = True)
         os.makedirs(os.path.join(self.DATA_DIR,'stream_files'), exist_ok = True)
-        os.makedirs(os.path.join(self.DATA_DIR,'lu_bufferd'), exist_ok = True)
+        os.makedirs(os.path.join(self.DATA_DIR,'land_use'), exist_ok = True)
         os.makedirs(os.path.join(self.DATA_DIR,'rapid_files'), exist_ok = True)
         os.makedirs(os.path.join(self.DATA_DIR,'flow_files'), exist_ok = True)
         os.makedirs(os.path.join(self.DATA_DIR,'vdts'), exist_ok = True)
@@ -147,7 +151,7 @@ class AutoRouteHandler:
                             extent: list = None) -> list[str]:
         dems = self.find_files(self.DEM_FOLDER)
         if extent:
-            dems = [dem for dem in dems if self.is_in_extent_gdal(dem, extent)]
+            dems = [dem for dem in dems if self.is_in_extent(dem, extent)]
         return dems
 
     def find_number_of_dems_in_extent(self) -> int:
@@ -160,12 +164,13 @@ class AutoRouteHandler:
             tif_files.extend(glob.glob(os.path.join(root, type)))
         return tif_files
 
-    def is_in_extent_gdal(self, 
-                          dem: str,
+    def is_in_extent(self, 
+                          ds: str | gdal.Dataset,
                           extent: list = None) -> bool:
         if extent is None:
             return True
-        ds = self.open_w_gdal(dem)
+        if isinstance(ds, str):
+            ds = self.open_w_gdal(ds)
         if not ds: return False
 
         minx, miny, maxx,maxy = self.get_ds_extent(ds)
@@ -307,7 +312,7 @@ class AutoRouteHandler:
         ds = self.open_w_gdal(dem)
         if not ds: return
         projection = ds.GetProjection()
-        ds_epsg = int(ds.GetSpatialRef().GetAttrValue('AUTHORITY', 1))
+        ds_epsg = self.get_epsg(ds)
 
         strm = os.path.join(self.DATA_DIR, 'stream_files', f"{self.DEM_NAME}__{self.STREAM_NAME}")
         os.makedirs(strm, exist_ok=True)
@@ -422,6 +427,110 @@ class AutoRouteHandler:
             .to_csv(row_col_file, sep=" ", index=False)
         )
         logging.info("Finished stream file")
+
+    def create_land_use(self, dem: str) -> None:
+        global GEOMETRY_SAVE_EXTENSION
+        lu_file = os.path.join(self.DATA_DIR, 'land_use', f"{self.DEM_NAME}")
+        os.makedirs(lu_file, exist_ok=True)
+        lu_file = os.path.join(lu_file, f"{os.path.basename(dem).split('.')[0]}__lu.vrt")
+        if not self.OVERWRITE and not os.path.exists(lu_file):
+            logging.info(f"{lu_file} already exists. Skipping...")
+            return
+        dem_ds = self.open_w_gdal(dem)
+        if not dem_ds: 
+            logging.warning(f'Could not open {dem}. Skipping...')
+            return
+        
+        dem_epsg = self.get_epsg(dem_ds)
+        projection = dem_ds.GetProjection()
+        dem_spatial_ref = dem_ds.GetSpatialRef()
+
+        minx, miny, maxx, maxy = self.get_ds_extent(dem_ds)
+        x_res = abs(dem_ds.GetGeoTransform()[1])
+        y_res = abs(dem_ds.GetGeoTransform()[5])
+        dem_ds = None
+
+        filenames = [os.path.join(self.LAND_USE_FOLDER,f) for f in os.listdir(self.LAND_USE_FOLDER) if f.endswith(('.tif'))]
+        if not self.check_has_same_projection(filenames):
+            logging.error("Some land use files have different projections. Exiting...")
+            raise NotImplementedError("Different projections")
+        if not filenames:
+            logging.warning(f"No land use files found in {self.LAND_USE_FOLDER}")
+            return
+        
+        # Loop over every file in the land use folder and check if it intersects with the dem
+        lu_epsg = self.get_epsg(self.open_w_gdal(filenames[0]))
+        lu_projection = self.open_w_gdal(filenames[0]).GetProjection()
+        if dem_epsg != lu_epsg:
+            out_spatial_ref = osr.SpatialReference()
+            out_spatial_ref.ImportFromEPSG(lu_epsg)
+            coordTrans = osr.CoordinateTransformation(dem_spatial_ref, out_spatial_ref)
+        files_to_use = []
+        for f in filenames:
+            ds = self.open_w_gdal(f)
+            if not ds: 
+                logging.warning(f'Could not open {f}. Skipping...')
+                continue
+            minx2, miny2, maxx2, maxy2 = self.get_ds_extent(ds)
+            if dem_epsg != lu_epsg:
+                # transformer = Transformer.from_crs(f"EPSG:{dem_epsg}",f"EPSG:{lu_epsg}", always_xy=True) 
+                # minx2, miny2 = transformer.transform(minx2, miny2)
+                # maxx2, maxy2 =  transformer.transform(maxx2, maxy2)
+                minx2, miny2, _ = coordTrans.TransformPoint(minx, miny)
+                maxx2, maxy2, _ = coordTrans.TransformPoint(maxx, maxy)
+                
+            if self.is_in_extent(ds, (minx2, miny2, maxx2, maxy2)):
+                files_to_use.append(f)
+            ds = None
+        
+        if not files_to_use:
+            logging.warning(f"No land use files found in the extent of {dem}")
+            return
+        
+        if dem_epsg != lu_epsg:
+            options = gdal.WarpOptions(
+            format='GTiff',
+            dstSRS=projection,
+            outputBounds=(minx, miny, maxx, maxy),
+            outputType=gdal.GDT_Byte,  
+            multithread=True, 
+            xRes=x_res,
+            yRes=y_res,
+            creationOptions = ["COMPRESS=DEFLATE", "PREDICTOR=2", "NUM_THREADS=ALL_CPUS"]
+            )    
+            lu_file = lu_file.replace('.vrt', '.tif')
+            gdal.Warp(lu_file, files_to_use, options=options) 
+        else:
+            vrt_options = gdal.BuildVRTOptions(outputSRS=projection,
+                                           outputBounds=(minx, miny, maxx, maxy),
+                                           resampleAlg='bilinear',
+                                           xRes=x_res,
+                                           yRes=y_res,
+                                           )
+            gdal.BuildVRT(lu_file, files_to_use, options=vrt_options)
+
+        
+            
+
+    def check_has_same_projection(self, files: List[str]) -> bool:
+        if not files: return True
+        try:
+            ds_code = self.get_epsg(self.open_w_gdal(files[0]))
+            for f in files[1:]:
+                if ds_code != self.get_epsg(self.open_w_gdal(f)):
+                    return False
+        except:
+            logging.warning(f"Problems with a file")
+            return False
+        return True
+
+    def get_epsg(self, ds: gdal.Dataset) -> int:
+        dem_spatial_ref = ds.GetSpatialRef()
+        dem_sr = osr.SpatialReference(str(dem_spatial_ref)) # load projection
+        res = dem_sr.AutoIdentifyEPSG() # identify EPSG
+        return int(dem_sr.GetAuthorityCode(None)) # get EPSG code
+        #return int(ds.GetSpatialRef().GetAttrValue('AUTHORITY', 1))
+
 
     def list_to_sublists(self, alist: List[Any], n: int) -> List[List[Any]]:
         return [alist[x:x+n] for x in range(0, len(alist), n)]
