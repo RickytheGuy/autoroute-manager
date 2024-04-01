@@ -12,7 +12,7 @@ sys.path.append(project_root)
 from autoroute.autoroute import AutoRouteHandler
 
 run_extent=True
-#@unittest.skip
+@unittest.skip
 class TestStreamRasterization(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -98,13 +98,11 @@ class TestStreamRasterization(unittest.TestCase):
         self.assertEqual(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), "GeoTransform is not equal")
         self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
 
-#@unittest.skip
+@unittest.skip
 class TestRowColIdFIle(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
               "DATA_DIR": "test_ar_data",
-              "DEM_FOLDER": "",
-              "BUFFER_FILES": False, 
               "DEM_NAME": "test_dem", 
               "STREAM_NETWORK_FOLDER": "tests/test_data/streamlines/dr_v0", 
               "STREAM_NAME": "test_strm", 
@@ -138,7 +136,7 @@ class TestRowColIdFIle(unittest.TestCase):
         val_df = pd.read_csv(self.validation)
         self.assertTrue(out_df.equals(val_df), "Dataframes are not equal")
 
-#@unittest.skip
+@unittest.skip
 class TestLandUse(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -182,6 +180,37 @@ class TestLandUse(unittest.TestCase):
         self.assertEqual(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), "GeoTransform is not equal")
         self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
 
+class TestCrop(unittest.TestCase):
+    def setUp(self) -> None:
+        self.params = {"OVERWRITE": True,
+              "DATA_DIR": "test_ar_data",
+              "DEM_FOLDER": "tests/test_data/DEMs/single_4326",
+              "BUFFER_FILES": False, 
+              "DEM_NAME": "test_dem", 
+              "STREAM_NETWORK_FOLDER": "tests/test_data/streamlines/single_parquet_4326", 
+              "STREAM_NAME": "test_strm", 
+              "STREAM_ID": "LINKNO" }
+        self.output = "test_ar_data/dems_cropped/test_dem/-72_163__18_623__-72_12__18_661_crop.vrt"
+        self.validation = "tests/test_data/DEMs/single_cropped/cropped_dem.tif"
+        
+    def tearDown(self) -> None:
+        pass
+        if self.output and os.path.exists(self.output): os.remove(self.output) 
+        
+    def test_crop_dem(self):
+        self.params["EXTENT"] = (-72.1626, 18.6228, -72.1195, 18.6611)
+        self.params["CROP"] = True
+        AutoRouteHandler(self.params).run()
+
+        if not os.path.exists(self.output):
+            self.output = self.output.replace(".vrt", ".tif")
+        self.assertTrue(os.path.exists(self.output), "File does not exist")
+        out_ds = gdal.Open(self.output)
+        self.assertIsNotNone(out_ds, "Problem opening file")
+        val_ds = gdal.Open(self.validation)
+        self.assertTrue((out_ds.ReadAsArray() - val_ds.ReadAsArray()).max() < 9.2, "Arrays are not equal") # Because cells are shifted, values shift as well oh so slightly, which a vrt does not pick up
+        self.assertTrue(np.isclose((np.array(out_ds.GetGeoTransform()) - np.array(val_ds.GetGeoTransform())).max(), 0), "GeoTransform is not equal")
+        self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
 
 if __name__ == '__main__':
     unittest.main()

@@ -530,7 +530,7 @@ class AutoRouteHandler:
     
     def crop(self, dem: str) -> str:
         os.makedirs(os.path.join(self.DATA_DIR, 'dems_cropped',self.DEM_NAME), exist_ok=True)
-        cropped_dem = os.path.join(self.DATA_DIR, 'dems_cropped', self.DEM_NAME, f"{str(round(self.EXTENT[0], 3)).replace('.','_')}__{str(round(self.EXTENT[1], 3)).replace('.','_')}__{str(round(self.EXTENT[2], 3)).replace('.','_')}__{str(round(self.EXTENT[3], 3)).replace('.','_')}.vrt")
+        cropped_dem = os.path.join(self.DATA_DIR, 'dems_cropped', self.DEM_NAME, f"{str(round(self.EXTENT[0], 3)).replace('.','_')}__{str(round(self.EXTENT[1], 3)).replace('.','_')}__{str(round(self.EXTENT[2], 3)).replace('.','_')}__{str(round(self.EXTENT[3], 3)).replace('.','_')}_crop.vrt")
         if not self.OVERWRITE and os.path.exists(cropped_dem):
             logging.info(f"{cropped_dem} already exists. Skipping...")
             return
@@ -549,7 +549,7 @@ class AutoRouteHandler:
         maxx = min(maxx, self.EXTENT[2])
         maxy = min(maxy, self.EXTENT[3])
 
-        vrt_options = gdal.BuildVRTOptions(resampleAlg='bilinear',
+        vrt_options = gdal.BuildVRTOptions(resampleAlg='lanczos',
                                         outputSRS=projection,
                                         srcNodata=no_data_value,
                                         outputBounds=(minx, miny, maxx, maxy))
