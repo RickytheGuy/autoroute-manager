@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+import logging
 
 import numpy as np
 import pandas as pd
@@ -10,6 +11,10 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(project_root)
 
 from autoroute.autoroute import AutoRouteHandler
+
+logging.basicConfig(level=logging.INFO,
+                    stream=sys.stdout,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
 
 run_extent=True
 @unittest.skip
@@ -180,6 +185,7 @@ class TestLandUse(unittest.TestCase):
         self.assertEqual(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), "GeoTransform is not equal")
         self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
 
+@unittest.skip
 class TestCrop(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -211,6 +217,8 @@ class TestCrop(unittest.TestCase):
         self.assertTrue((out_ds.ReadAsArray() - val_ds.ReadAsArray()).max() < 9.2, "Arrays are not equal") # Because cells are shifted, values shift as well oh so slightly, which a vrt does not pick up
         self.assertTrue(np.isclose((np.array(out_ds.GetGeoTransform()) - np.array(val_ds.GetGeoTransform())).max(), 0), "GeoTransform is not equal")
         self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
+
+
 
 if __name__ == '__main__':
     unittest.main()

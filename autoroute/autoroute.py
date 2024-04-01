@@ -9,7 +9,6 @@ from typing import Tuple, Any, List
 import geopandas as gpd
 import pandas as pd
 import numpy as np
-import psutil
 import fiona
 import yaml
 from osgeo import gdal, osr
@@ -20,10 +19,6 @@ from pyproj import Transformer
 os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = 'TRUE' # Set to avoid reading really large folders
 os.environ["GDAL_NUM_THREADS"] = 'ALL_CPUS'
 gdal.UseExceptions()
-
-logging.basicConfig(level=logging.INFO,
-                    stream=sys.stdout,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
 
 try:
     import pyogrio
@@ -41,17 +36,18 @@ else:
 
 class AutoRouteHandler:
     def __init__(self, 
-                 yaml: str) -> None:
+                 yaml: str = None) -> None:
         """
         yaml may be string or dictionary
         """
-        self.setup(yaml)
+        if yaml:
+            self.setup(yaml)
 
     def run(self) -> None:
         if self.DEM_FOLDER:
-            dems = [os.path.join(self.DEM_FOLDER,f) for f in os.listdir(self.DEM_FOLDER) if f.lower().endswith((".tif", ".vrt"))]
+            dems = {os.path.join(self.DEM_FOLDER,f) for f in os.listdir(self.DEM_FOLDER) if f.lower().endswith((".tif", ".vrt"))}
             if self.EXTENT:
-                dems = [dem for dem in dems if self.is_in_extent(dem, self.EXTENT)]
+                dems = {dem for dem in dems if self.is_in_extent(dem, self.EXTENT)}
         else:
             dems = []
         processes = min(len(dems), os.cpu_count())
@@ -67,6 +63,8 @@ class AutoRouteHandler:
                     pool.map(self.create_land_use, dems)
 
         strms = glob.glob(os.path.join(self.DATA_DIR, 'stream_files', f"{self.DEM_NAME}__{self.STREAM_NAME}","*.tif"))
+        if not self.DEM_FOLDER and self.EXTENT:
+            strms = {strm for strm in strms if self.is_in_extent(strm, self.EXTENT)}
         if strms and self.FLOWFILE:
             processes = min(len(strms), os.cpu_count())
             with multiprocessing.Pool(processes=processes) as pool:
