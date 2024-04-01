@@ -11,7 +11,8 @@ sys.path.append(project_root)
 
 from autoroute.autoroute import AutoRouteHandler
 
-@unittest.skip
+run_extent=True
+#@unittest.skip
 class TestStreamRasterization(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -24,6 +25,7 @@ class TestStreamRasterization(unittest.TestCase):
               "STREAM_ID": "LINKNO" }
         self.output = "test_ar_data/stream_files/test_dem__test_strm/N18W073_FABDEM_V1-2__strm.tif"
         self.validation = "tests/test_data/validation/rasterization/N18W073_FABDEM_V1-2__strm_val.tif"
+        
         
     def tearDown(self) -> None:
         if self.output and os.path.exists(self.output): os.remove(self.output) 
@@ -52,6 +54,8 @@ class TestStreamRasterization(unittest.TestCase):
         self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
 
     def test_difProjection_parquet_singleFiles(self):
+        global run_extent
+        run_extent=False
         self.params["STREAM_NETWORK_FOLDER"] = "tests/test_data/streamlines/single_parquet_3857"
         AutoRouteHandler(self.params).run()
 
@@ -62,6 +66,7 @@ class TestStreamRasterization(unittest.TestCase):
         self.assertTrue(np.array_equal(out_ds.ReadAsArray(), val_ds.ReadAsArray()), "Arrays are not equal")
         self.assertEqual(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), "GeoTransform is not equal")
         self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
+        run_extent=True
 
     def test_various_files_and_projections(self):
         self.params["STREAM_NETWORK_FOLDER"] = "tests/test_data/streamlines/multiple_parquet_various"
@@ -76,7 +81,24 @@ class TestStreamRasterization(unittest.TestCase):
         self.assertEqual(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), "GeoTransform is not equal")
         self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
 
+    @unittest.skipIf(not run_extent, "one of the parquet tests failed, not running this one")
+    def test_w_extent(self):
+        self.params["STREAM_NETWORK_FOLDER"] = "tests/test_data/streamlines/single_parquet_4326"
+        self.params["EXTENT"] = (-72.1626, 18.6228, -72.1195, 18.6611)
+        self.params["CROP"] = True
+        self.output = "test_ar_data/stream_files/test_dem__test_strm/-72_163__18_623__-72_12__18_661__strm.tif"
+        self.validation = "tests/test_data/validation/rasterization/-72_163__18_623__-72_12__18_661__strm.tif"
+        AutoRouteHandler(self.params).run()
 
+        self.assertTrue(os.path.exists(self.output))
+        out_ds = gdal.Open(self.output)
+        self.assertIsNotNone(out_ds)
+        val_ds = gdal.Open(self.validation)
+        self.assertTrue(np.array_equal(out_ds.ReadAsArray(), val_ds.ReadAsArray()), "Arrays are not equal")
+        self.assertEqual(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), "GeoTransform is not equal")
+        self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
+
+#@unittest.skip
 class TestRowColIdFIle(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -115,7 +137,8 @@ class TestRowColIdFIle(unittest.TestCase):
         out_df = pd.read_csv(self.output)
         val_df = pd.read_csv(self.validation)
         self.assertTrue(out_df.equals(val_df), "Dataframes are not equal")
-@unittest.skip
+
+#@unittest.skip
 class TestLandUse(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,

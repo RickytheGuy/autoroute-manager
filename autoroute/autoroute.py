@@ -48,21 +48,21 @@ class AutoRouteHandler:
         self.setup(yaml)
 
     def run(self) -> None:
-        if self.BUFFER_FILES:
-            if not all({self.DEM_FOLDER, self.DEM_NAME, self.STREAM_NETWORK_FOLDER, self.LAND_USE_FOLDER, self.FLOWFILE, self.ID_COLUMN, self.FLOW_COLUMN}):
-                logging.error('You\'re missing some inputs for "Buffer Files"')
-                return
-            dems = self.find_dems_in_extent(self.EXTENT)
+        if self.DEM_FOLDER:
+            dems = [os.path.join(self.DEM_FOLDER,f) for f in os.listdir(self.DEM_FOLDER) if f.lower().endswith((".tif", ".vrt"))]
+            if self.EXTENT:
+                dems = [dem for dem in dems if self.is_in_extent(dem, self.EXTENT)]
         else:
-            if self.DEM_FOLDER:
-                dems = [os.path.join(self.DEM_FOLDER,f) for f in os.listdir(self.DEM_FOLDER) if f.lower().endswith((".tif", ".vrt"))]
-            else:
-                dems = []
+            dems = []
         processes = min(len(dems), os.cpu_count())
         if processes > 0:
             with multiprocessing.Pool(processes=processes) as pool:
+                if self.CROP and self.EXTENT:
+                    dems = pool.map(self.crop, dems)
+
                 if self.STREAM_NETWORK_FOLDER:
                     pool.map(self.create_strm_file, dems)
+
                 if self.LAND_USE_FOLDER:
                     pool.map(self.create_land_use, dems)
 
@@ -72,7 +72,6 @@ class AutoRouteHandler:
             with multiprocessing.Pool(processes=processes) as pool:
                 pool.map(self.create_row_col_id_file, strms)
         
-
     def setup(self, yaml_file) -> None:
         """
         Ensure working folder exists and set up. Each folder contains a folder based on the type of dem used and the stream network
@@ -112,7 +111,8 @@ class AutoRouteHandler:
         self.FLOWFILE = ""
         self.ID_COLUMN = ""
         self.FLOW_COLUMN = ""
-        self.EXTENT = []
+        self.EXTENT = None
+        self.CROP = False
         self.OVERWRITE = False
         self.STREAM_NAME = ""
         self.STREAM_ID = ""
@@ -129,12 +129,15 @@ class AutoRouteHandler:
         if not self.DATA_DIR:
             logging.error('No working folder provided!')
             return
+        if not os.path.isabs(self.DATA_DIR):
+            self.DATA_DIR = os.path.abspath(self.DATA_DIR)
         os.makedirs(self.DATA_DIR, exist_ok = True)
         #os.chdir(self.DATA_DIR)
         with open(os.path.join(self.DATA_DIR,'This is the working folder. Please delete and modify with caution.txt'), 'a') as f:
             pass
 
         os.makedirs(os.path.join(self.DATA_DIR,'dems_buffered'), exist_ok = True)
+        os.makedirs(os.path.join(self.DATA_DIR,'dems_cropped'), exist_ok = True)
         os.makedirs(os.path.join(self.DATA_DIR,'stream_files'), exist_ok = True)
         os.makedirs(os.path.join(self.DATA_DIR,'land_use'), exist_ok = True)
         os.makedirs(os.path.join(self.DATA_DIR,'rapid_files'), exist_ok = True)
@@ -175,7 +178,14 @@ class AutoRouteHandler:
 
         minx, miny, maxx,maxy = self.get_ds_extent(ds)
         ds = None
-
+        return self._isin(minx, miny, maxx, maxy, extent)
+    
+    def _isin(self, 
+              minx: float, 
+              miny: float, 
+              maxx: float, 
+              maxy: float, 
+              extent: list) -> bool:
         minx1, miny1, maxx1, maxy1 = extent 
         if (minx1 <= maxx and maxx1 >= minx and miny1 <= maxy and maxy1 >= miny):
             return True
@@ -226,20 +236,7 @@ class AutoRouteHandler:
             logging.warning(f'Somehow no dems found in this extent: {(minx, miny, maxx, maxy)}')
             return
         
-        # vrt_options = gdal.BuildVRTOptions(resampleAlg='bilinear')
-        # vrt_dataset = gdal.BuildVRT('', dems, options=vrt_options)
-        # warp_options = gdal.WarpOptions(
-        #     format='GTiff',
-        #     dstSRS=projection,
-        #     dstNodata=no_data_value,
-        #     outputBounds=(minx, miny, maxx, maxy),
-        #     outputType=gdal.GDT_Float32,  
-        #     multithread=True, 
-        #     creationOptions = ["COMPRESS=DEFLATE", "PREDICTOR=3","BIGTIFF=YES", "NUM_THREADS=ALL_CPUS"]
-        #     )    
-        
         try:
-            #gdal.Warp(buffered_dem, vrt_dataset, options=warp_options)
             vrt_options = gdal.BuildVRTOptions(resampleAlg='bilinear',
                                                outputSRS=projection,
                                                srcNodata=no_data_value,
@@ -307,7 +304,8 @@ class AutoRouteHandler:
             raise NotImplementedError(f"Unsupported file type: {path}")
         return df
             
-    def create_strm_file(self, dem: str) -> None:
+    def create_strm_file(self, 
+                         dem: str, ) -> None:
         global GEOMETRY_SAVE_EXTENSION
         ds = self.open_w_gdal(dem)
         if not ds: return
@@ -509,9 +507,6 @@ class AutoRouteHandler:
                                            )
             gdal.BuildVRT(lu_file, files_to_use, options=vrt_options)
 
-        
-            
-
     def check_has_same_projection(self, files: List[str]) -> bool:
         if not files: return True
         try:
@@ -529,10 +524,39 @@ class AutoRouteHandler:
         dem_sr = osr.SpatialReference(str(dem_spatial_ref)) # load projection
         res = dem_sr.AutoIdentifyEPSG() # identify EPSG
         return int(dem_sr.GetAuthorityCode(None)) # get EPSG code
-        #return int(ds.GetSpatialRef().GetAttrValue('AUTHORITY', 1))
-
 
     def list_to_sublists(self, alist: List[Any], n: int) -> List[List[Any]]:
         return [alist[x:x+n] for x in range(0, len(alist), n)]
+    
+    def crop(self, dem: str) -> str:
+        os.makedirs(os.path.join(self.DATA_DIR, 'dems_cropped',self.DEM_NAME), exist_ok=True)
+        cropped_dem = os.path.join(self.DATA_DIR, 'dems_cropped', self.DEM_NAME, f"{str(round(self.EXTENT[0], 3)).replace('.','_')}__{str(round(self.EXTENT[1], 3)).replace('.','_')}__{str(round(self.EXTENT[2], 3)).replace('.','_')}__{str(round(self.EXTENT[3], 3)).replace('.','_')}.vrt")
+        if not self.OVERWRITE and os.path.exists(cropped_dem):
+            logging.info(f"{cropped_dem} already exists. Skipping...")
+            return
+        ds = self.open_w_gdal(dem)
+        if not ds:
+            logging.warning(f'Could not open {dem}. Skipping...')
+            return
+        projection = ds.GetProjection()
+        no_data_value = ds.GetRasterBand(1).GetNoDataValue()
+        minx, miny, maxx, maxy = self.get_ds_extent(ds)
+        ds = None
+
+        # Crop the DEM to the min of the extent and the DEM itself
+        minx = max(minx, self.EXTENT[0])
+        miny = max(miny, self.EXTENT[1])
+        maxx = min(maxx, self.EXTENT[2])
+        maxy = min(maxy, self.EXTENT[3])
+
+        vrt_options = gdal.BuildVRTOptions(resampleAlg='bilinear',
+                                        outputSRS=projection,
+                                        srcNodata=no_data_value,
+                                        outputBounds=(minx, miny, maxx, maxy))
+        gdal.BuildVRT(cropped_dem, dem, options=vrt_options)
+        return cropped_dem
+            
+
+
         
     
