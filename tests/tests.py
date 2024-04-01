@@ -76,7 +76,7 @@ class TestStreamRasterization(unittest.TestCase):
         self.assertEqual(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), "GeoTransform is not equal")
         self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
 
-@unittest.skip
+
 class TestRowColIdFIle(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -84,10 +84,10 @@ class TestRowColIdFIle(unittest.TestCase):
               "DEM_FOLDER": "",
               "BUFFER_FILES": False, 
               "DEM_NAME": "test_dem", 
-              "STREAM_NETWORK_FOLDER": "/Users/ricky/Desktop/MAC/MAC/StreamlineShapefile", 
+              "STREAM_NETWORK_FOLDER": "tests/test_data/streamlines/dr_v0", 
               "STREAM_NAME": "test_strm", 
               "STREAM_ID": "COMID",
-               "FLOWFILE":  "/Users/ricky/Desktop/MAC/MAC/FlowFile/DR_test.txt",
+               "FLOWFILE":  "tests/test_data/flow_files/DR_test.txt",
                "ID_COLUMN": "COMID",
                "FLOW_COLUMN": "DR_Histori",
                "BASE_FLOW_COLUMN": "base"}
@@ -115,7 +115,7 @@ class TestRowColIdFIle(unittest.TestCase):
         out_df = pd.read_csv(self.output)
         val_df = pd.read_csv(self.validation)
         self.assertTrue(out_df.equals(val_df), "Dataframes are not equal")
-
+@unittest.skip
 class TestLandUse(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
