@@ -18,7 +18,6 @@ logging.basicConfig(level=logging.INFO,
 
 with gr.Blocks(title='AutoRoute WebUI') as demo:
     gr.Markdown('# AutoRoute WebUI')
-
     with gr.Tabs():
         with gr.TabItem('Run AutoRoute'):
             gr.Markdown('## Inputs - Required')
@@ -97,10 +96,10 @@ with gr.Blocks(title='AutoRoute WebUI') as demo:
                     
                     with gr.Row():
                         gr.Markdown("Specify an extent if needed")
-                        minx = gr.Number(label='Min X')
-                        maxx = gr.Number(label='Max X')
-                        miny = gr.Number(label='Min Y')
-                        maxy = gr.Number(label='Max Y')
+                        minx = gr.Number(label='Min X', )
+                        maxx = gr.Number(label='Max X', )
+                        miny = gr.Number(label='Min Y', )
+                        maxy = gr.Number(label='Max Y', )
 
                     overwrite = gr.Checkbox(label='Overwrite',
                                             #info='Overwrite existing files?',

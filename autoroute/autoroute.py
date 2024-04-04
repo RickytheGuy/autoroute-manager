@@ -115,6 +115,7 @@ class AutoRouteHandler:
         self.STREAM_NAME = ""
         self.STREAM_ID = ""
         self.BASE_FLOW_COLUMN = ""
+        self.LAND_USE_NAME = ""
 
         if isinstance(yaml_file, dict):
             for key, value in yaml_file.items():
@@ -426,7 +427,7 @@ class AutoRouteHandler:
 
     def create_land_use(self, dem: str) -> None:
         global GEOMETRY_SAVE_EXTENSION
-        lu_file = os.path.join(self.DATA_DIR, 'land_use', f"{self.DEM_NAME}")
+        lu_file = os.path.join(self.DATA_DIR, 'land_use', f"{self.DEM_NAME}__{self.LAND_USE_NAME}")
         os.makedirs(lu_file, exist_ok=True)
         lu_file = os.path.join(lu_file, f"{os.path.basename(dem).split('.')[0]}__lu.vrt")
         if not self.OVERWRITE and not os.path.exists(lu_file):

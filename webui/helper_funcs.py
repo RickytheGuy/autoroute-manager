@@ -381,7 +381,11 @@ class ManagerFacade():
             num /= 1024.0
         return f"{num:.1f} YB"
     
-    def make_map(self, minx, miny, maxx, maxy):
+    def make_map(self, 
+                 minx: float, 
+                 miny: float, 
+                 maxx: float, 
+                 maxy: float):
         if minx is None:
             minx = -180
         if miny is None:

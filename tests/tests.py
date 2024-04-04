@@ -141,19 +141,19 @@ class TestRowColIdFIle(unittest.TestCase):
         val_df = pd.read_csv(self.validation)
         self.assertTrue(out_df.equals(val_df), "Dataframes are not equal")
 
-@unittest.skip
+#@unittest.skip
 class TestLandUse(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
               "DATA_DIR": "/Users/ricky/autoroute-manager/test_ar_data",
               "DEM_FOLDER": "tests/test_data/DEMs/single_4326",
               "BUFFER_FILES": False, 
-              "DEM_NAME": "test_dem", }
-        self.output = "test_ar_data/land_use/test_dem/N18W073_FABDEM_V1-2__lu.vrt"
+              "DEM_NAME": "test_dem", 
+              "LAND_USE_NAME": "test_land_use", }
+        self.output = "test_ar_data/land_use/test_dem__test_land_use/N18W073_FABDEM_V1-2__lu.vrt"
         self.validation = "tests/test_data/validation/LU/same_proj/lu.tif"
         
     def tearDown(self) -> None:
-        pass
         if self.output and os.path.exists(self.output): os.remove(self.output) 
         
     def test_land_use_samesize(self):
