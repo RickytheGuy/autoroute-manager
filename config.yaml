@@ -14,6 +14,7 @@ BASE_FLOW_COLUMN: "" # Column name in the flow file that represents the base flo
 EXTENT: [] # Extent of the area to process, in the form [xmin, ymin, xmax, ymax]. If blank or empty, the extent of the DEM(s) will be used
 CROP: false # Whether to crop the DEM(s) exactly to the extent given
 LAND_USE_FOLDER: "/Users/ricky/Desktop/MAC/MAC/LAND" # Path to folder containing land use files; optional
+LAND_USE_NAME: "" # Name representing the land use files
 
 ###### AUTOROUTE ######
 AUTOROUTE: false # Whether to run autoroute

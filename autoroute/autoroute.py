@@ -355,7 +355,7 @@ class AutoRouteHandler:
             logging.error(f"{self.STREAM_ID} not found in the stream files here: {self.STREAM_NETWORK_FOLDER}")
 
         options = gdal.RasterizeOptions(attribute=self.STREAM_ID,
-                              outputType=gdal.GDT_UInt64, # Assume no negative IDs
+                              outputType=gdal.GDT_UInt32, # Assume no negative IDs
                               format='GTiff',
                               outputSRS=projection,
                               creationOptions=["COMPRESS=DEFLATE", "PREDICTOR=2"],
