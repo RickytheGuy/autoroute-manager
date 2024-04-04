@@ -69,6 +69,9 @@ class AutoRouteHandler:
             processes = min(len(strms), os.cpu_count())
             with multiprocessing.Pool(processes=processes) as pool:
                 pool.map(self.create_row_col_id_file, strms)
+
+        if self.AUTOROUTE:
+            pass
         
     def setup(self, yaml_file) -> None:
         """
@@ -116,6 +119,9 @@ class AutoRouteHandler:
         self.STREAM_ID = ""
         self.BASE_FLOW_COLUMN = ""
         self.LAND_USE_NAME = ""
+
+        self.AUTOROUTE = ""
+        self.FLOODSPREADER = ""
 
         if isinstance(yaml_file, dict):
             for key, value in yaml_file.items():
@@ -356,7 +362,7 @@ class AutoRouteHandler:
             logging.error(f"{self.STREAM_ID} not found in the stream files here: {self.STREAM_NETWORK_FOLDER}")
 
         options = gdal.RasterizeOptions(attribute=self.STREAM_ID,
-                              outputType=gdal.GDT_UInt32, # Assume no negative IDs
+                              outputType=gdal.GDT_UInt32, # Assume no negative IDs. DO NOT SET TO UINT64
                               format='GTiff',
                               outputSRS=projection,
                               creationOptions=["COMPRESS=DEFLATE", "PREDICTOR=2"],

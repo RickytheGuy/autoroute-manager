@@ -16,10 +16,7 @@ CROP: false # Whether to crop the DEM(s) exactly to the extent given
 LAND_USE_FOLDER: "/Users/ricky/Desktop/MAC/MAC/LAND" # Path to folder containing land use files; optional
 LAND_USE_NAME: "" # Name representing the land use files
 
-###### AUTOROUTE ######
-AUTOROUTE: false # Whether to run autoroute
-AUTOROUTE_FOLDER: "/Users/ricky/Desktop/MAC/MAC/AutoRoute" # Path to folder containing autoroute files
-AUTOROUTE_FILE: "DR_full" # Name of the autoroute file
-AUTOROUTE_COLUMN: "DR_full" # Column name in the autoroute file that represents the IDs of the streams
-AUTOROUTE_FLOW_COLUMN: "DR_Histori" # Column name in the autoroute file that represents the flow of the streams. If blank, all columns besides the ID column will be used
+
+AUTOROUTE: "C:\Users\lrr43\Desktop\Lab\MichiganTest\AutoRoute_w_GDAL.exe" # Path to AutoRoute executable
+FLOODSPREADER: "C:\Users\lrr43\Desktop\Lab\MichiganTest\AutoRoute_FloodSpreader.exe" # Path to FloodSpreader executable
 
