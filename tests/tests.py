@@ -91,8 +91,8 @@ class TestStreamRasterization(unittest.TestCase):
         self.params["STREAM_NETWORK_FOLDER"] = os.path.join("tests","test_data","streamlines","single_parquet_4326")
         self.params["EXTENT"] = (-72.1626, 18.6228, -72.1195, 18.6611)
         self.params["CROP"] = True
-        self.output = os.path.join("test_ar_data","stream_files","test_dem__test_strm","-72_163__18_623__-72_12__18_661__strm.tif")
-        self.validation = os.path.join("tests","test_data","validation","rasterization","-72_163__18_623__-72_12__18_661__strm.tif")
+        self.output = os.path.join("test_ar_data","stream_files","test_dem__test_strm","-72_163__18_623__-72_12__18_661_crop__strm.tif")
+        self.validation = os.path.join("tests","test_data","validation","rasterization","-72_163__18_623__-72_12__18_661_crop__strm.tif")
         AutoRouteHandler(self.params).run()
 
         self.assertTrue(os.path.exists(self.output))
@@ -103,7 +103,7 @@ class TestStreamRasterization(unittest.TestCase):
         self.assertEqual(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), "GeoTransform is not equal")
         self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
 
-@unittest.skip
+#@unittest.skip
 class TestRowColIdFIle(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -141,7 +141,7 @@ class TestRowColIdFIle(unittest.TestCase):
         val_df = pd.read_csv(self.validation)
         self.assertTrue(out_df.equals(val_df), "Dataframes are not equal")
 
-@unittest.skip
+#@unittest.skip
 class TestLandUse(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -187,7 +187,7 @@ class TestLandUse(unittest.TestCase):
         self.assertEqual(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), "GeoTransform is not equal")
         self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
 
-@unittest.skip
+#@unittest.skip
 class TestCrop(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -221,7 +221,7 @@ class TestCrop(unittest.TestCase):
         self.assertTrue(np.isclose((np.array(out_ds.GetGeoTransform()) - np.array(val_ds.GetGeoTransform())).max(), 0), "GeoTransform is not equal")
         self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
 
-@unittest.skipIf(sys.platform != "win32", "Runs only on windows")
+#@unittest.skipIf(sys.platform != "win32", "Runs only on windows")
 class TestAutoRoute(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
