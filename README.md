@@ -16,7 +16,7 @@ Create a new enviroment from the environment yaml file included like so:
 ### GDAL for AutoRoute (Windows)
 AutoRoute, as it currently stands, was compiled on Windows with GDAL 2.2.3. Assuming your windows is 64 bit, download gdal-202-1700-x64-core.msi [here](https://www.gisinternals.com/query2.html?content=filelist&file=release-1700-x64-gdal-2-2-3-mapserver-7-0-7.zip). Run the installer. By default, it will try to install GDAL either in Program Files or in the top level C:\.
 
-In a conda prompt, run the following (you replace "autoroute" for any other environment name of your choice):
+In a conda prompt, run the following (the webui expects the environment name to be "autoroute"):
 ```
 conda create -n autoroute
 conda activate autoroute
@@ -36,15 +36,15 @@ type NUL > .\etc\conda\deactivate.d\env_vars.bat
 The above made two directories in your conda environment and two files in each directory. Go to these, edit using something like notepad. Edit the env_vars.bat in activate.d to be something like:
 
 ```
-set PATH=C:\Users\USERNAME\miniconda3\envs\NAME\GDAL;%PATH%
-set GDAL_DATA=C:\Users\USERNAME\miniconda3\envs\NAME\GDAL\gdal-data
+set PATH=C:\Users\USERNAME\miniconda3\envs\autoroute\GDAL;%PATH%
+set GDAL_DATA=C:\Users\USERNAME\miniconda3\envs\autoroute\GDAL\gdal-data
 ```
 
 And the env_vars.bat in deactivate.d to be: 
 
 ```
 set GDAL_DATA=
-set PATH=%PATH:C:\Users\USERNAME\miniconda3\envs\NAME\GDAL;=%
+set PATH=%PATH:C:\Users\USERNAME\miniconda3\envs\autoroute\GDAL;=%
 ```
 Make sure all these paths are correct casing. Don’t delete the semicolons!
 
@@ -54,7 +54,7 @@ Reopen your anaconda prompt. After activating the environment, you will be able 
 
 ### GDAL for AutoRoute (Linux)
 AutoRoute, as it currently stands, was compiled on a Linux with GDAL 3.5.1. 
-In a conda prompt, run the following (you can replace "autoroute" for any other environment name of your choice):
+In a conda prompt, run the following (the webui expects the environment name to be "autoroute"):
 ```
 conda create -n autoroute
 conda activate autoroute

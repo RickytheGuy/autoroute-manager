@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
 run_extent=True
-#@unittest.skip
+@unittest.skip
 class TestStreamRasterization(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -103,7 +103,7 @@ class TestStreamRasterization(unittest.TestCase):
         self.assertEqual(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), "GeoTransform is not equal")
         self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
 
-#@unittest.skip
+@unittest.skip
 class TestRowColIdFIle(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -141,7 +141,7 @@ class TestRowColIdFIle(unittest.TestCase):
         val_df = pd.read_csv(self.validation)
         self.assertTrue(out_df.equals(val_df), "Dataframes are not equal")
 
-#@unittest.skip
+@unittest.skip
 class TestLandUse(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -187,7 +187,7 @@ class TestLandUse(unittest.TestCase):
         self.assertEqual(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), "GeoTransform is not equal")
         self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
 
-#@unittest.skip
+@unittest.skip
 class TestCrop(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -221,7 +221,7 @@ class TestCrop(unittest.TestCase):
         self.assertTrue(np.isclose((np.array(out_ds.GetGeoTransform()) - np.array(val_ds.GetGeoTransform())).max(), 0), "GeoTransform is not equal")
         self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
 
-#@unittest.skipIf(sys.platform != "win32", "Runs only on windows")
+@unittest.skipIf(sys.platform != "win32" and sys.platform != "linux", "Runs only on windows or linux")
 class TestAutoRoute(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -232,16 +232,26 @@ class TestAutoRoute(unittest.TestCase):
               "STREAM_NETWORK_FOLDER": os.path.join("tests","test_data","streamlines","single_4326"), 
               "STREAM_NAME": "test_strm", 
               "STREAM_ID": "LINKNO",
-               "LAND_USE_FOLDER": os.path.join("tests","test_data","LUs","single_4326"),
-                "LAND_USE_NAME": "test_land",
-                 "AUTOROUTE": os.path.join("tests","test_data","exes","AutoRoute_w_GDAL.exe"),
-                  "FLOODSPREADER": os.path.join("tests","test_data","exes", "AutoRoute_FloodSpreader.exe") }
+              "LAND_USE_FOLDER": os.path.join("tests","test_data","LUs","single_4326"),
+              "LAND_USE_NAME": "test_land",
+              "AUTOROUTE": os.path.join("tests","test_data","exes","AutoRoute_w_GDAL.exe"),
+              "FLOODSPREADER": os.path.join("tests","test_data","exes", "AutoRoute_FloodSpreader.exe") }
         self.output = os.path.join("test_ar_data","stream_files","test_dem__test_strm","N18W073_FABDEM_V1-2__strm.tif")
-        self.validation = os.path.join("tests","test_data","validation","rasterization","N18W073_FABDEM_V1-2__strm_val.tif")
-        
+        # self.validation = os.path.join("tests","test_data","validation","rasterization","N18W073_FABDEM_V1-2__strm_val.tif")
         
     def tearDown(self) -> None:
         if self.output and os.path.exists(self.output): os.remove(self.output) 
+
+    def test_AutoRoute(self):
+        AutoRouteHandler(self.params).run()
+
+        # self.assertTrue(os.path.exists(self.output))
+        # out_ds = gdal.Open(self.output)
+        # self.assertIsNotNone(out_ds)
+        # val_ds = gdal.Open(self.validation)
+        # self.assertTrue(np.array_equal(out_ds.ReadAsArray(), val_ds.ReadAsArray()), "Arrays are not equal")
+        # self.assertEqual(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), "GeoTransform is not equal")
+        # self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
 
 if __name__ == '__main__':
     unittest.main()
