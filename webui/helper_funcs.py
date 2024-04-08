@@ -42,8 +42,8 @@ class ManagerFacade():
     def init(self) -> None:
         self.manager = AutoRouteHandler(None)
         
-    async def run(self):
-        await self.run_exe(self.exe, self.mifn)
+    async def run(self, **kwargs):
+        await self._run(**kwargs)
 
     #@staticmethod
     def _format_files(self,file_path: str) -> str:
@@ -123,15 +123,43 @@ class ManagerFacade():
         else:
             return gr.Markdown(visible=False), gr.DataFrame(visible=False), gr.Textbox(visible=False)
 
-    def run_fs(self,dem, flow_file, subtract_baseflow, flow_id, flow_params, flow_baseflow, num_iterations,
-                                                    meta_file, convert_cfs_to_cms, x_distance, q_limit, lu_raster, is_lu_same_as_dem, mannings_table, direction_distance, slope_distance, low_spot_distance, low_spot_is_meters,
+    async def _run(self,dem, dem_name, strm_lines, strm_name, lu_file, lu_name, base_max_file, subtract_baseflow, flow_id, flow_params, flow_baseflow, num_iterations,
+                                                    meta_file, convert_cfs_to_cms, x_distance, q_limit, mannings_table, direction_distance, slope_distance, low_spot_distance, low_spot_is_meters,
                                                     low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, degree_manip, degree_interval, Str_Limit_Val, UP_Str_Limit_Val, row_start, row_end, use_prev_d_4_xs,
                                                     weight_angles, man_n, adjust_flow, bathy_alpha, bathy_file, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
                                                     specify_depth, twd_factor, only_streams, use_ar_top_widths, flood_local, depth_map, flood_map, velocity_map, wse_map, fs_bathy_file, da_flow_param,
-                                                    bathy_method,bathy_x_max_depth, bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor) -> None:
+                                                    bathy_method,bathy_x_max_depth, bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,
+                                                    data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file) -> None:
         """
         Write the main input file
         """
+        if minx == 0 and miny == 0 and maxx == 0 and maxy == 0:
+            extent = None
+        else:
+            extent = (minx, miny, maxx, maxy)
+        params = {"OVERWRITE": overwrite,
+                  "DATA_DIR": data_dir,
+                  "DEM_FOLDER": dem,
+                  "BUFFER_FILES": buffer,
+                  "DEM_NAME": dem_name,
+                  "STREAM_NETWORK_FOLDER": strm_lines,
+                  "STREAM_NAME": strm_name,
+                  "STREAM_ID": flow_id,
+                  "FLOWFILE": base_max_file,
+                  "ID_COLUMN": flow_id,
+                  "FLOW_COLUMN": flow_params,
+                  "BASE_FLOW_COLUMN": flow_baseflow,
+                  "EXTENT": extent,
+                  "CROP": crop,
+                  "LAND_USE_FOLDER": lu_file,
+                  "LAND_USE_NAME": lu_name,
+                  "AUTOROUTE": "C:\Users\lrr43\Desktop\Lab\MichiganTest\AutoRoute_w_GDAL.exe", 
+                  "FLOODSPREADER": "C:\Users\lrr43\Desktop\Lab\MichiganTest\AutoRoute_FloodSpreader.exe"
+}
+        self.manager.setup(params)
+        self.manager.run()
+        print("RUNNING")
+        return
         if not mifn:
             gr.Warning('Specify the main input file')
             return
