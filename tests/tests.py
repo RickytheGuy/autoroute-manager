@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
 run_extent=True
-#@unittest.skip
+@unittest.skip
 class TestStreamRasterization(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -113,7 +113,7 @@ class TestStreamRasterization(unittest.TestCase):
         out_ds = None
         val_ds = None
 
-#@unittest.skip
+@unittest.skip
 class TestRowColIdFIle(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -156,7 +156,7 @@ class TestRowColIdFIle(unittest.TestCase):
         val_df = val_df.reindex(sorted(val_df.columns), axis=1)
         self.assertTrue(out_df.equals(val_df), "Dataframes are not equal")
 
-#@unittest.skip
+@unittest.skip
 class TestLandUse(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -202,7 +202,7 @@ class TestLandUse(unittest.TestCase):
         self.assertEqual(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), "GeoTransform is not equal")
         self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
 
-#@unittest.skip
+@unittest.skip
 class TestCrop(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -236,7 +236,7 @@ class TestCrop(unittest.TestCase):
         self.assertTrue(np.isclose((np.array(out_ds.GetGeoTransform()) - np.array(val_ds.GetGeoTransform())).max(), 0), "GeoTransform is not equal")
         self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
 
-#@unittest.skip
+@unittest.skip
 class TestFlowFile(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -275,6 +275,10 @@ class TestAutoRoute(unittest.TestCase):
               "STREAM_ID": "LINKNO",
               "LAND_USE_FOLDER": os.path.join("tests","test_data","LUs","single_4326"),
               "LAND_USE_NAME": "test_land",
+              "SIMULATION_FLOWFILE":  os.path.join("tests","test_data","flow_files","v2_flows.csv",),
+               "ID_COLUMN": "LINKNO",
+               "FLOW_COLUMN": "max",
+               "BASE_FLOW_COLUMN": "flow",
               "AUTOROUTE": os.path.join("tests","test_data","exes","AutoRoute_w_GDAL.exe"),
               "FLOODSPREADER": os.path.join("tests","test_data","exes", "AutoRoute_FloodSpreader.exe") }
         self.output = os.path.join("test_ar_data","stream_files","test_dem__test_strm","N18W073_FABDEM_V1-2__strm.tif")

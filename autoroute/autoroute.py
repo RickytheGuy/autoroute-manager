@@ -1,6 +1,7 @@
 import logging
 import sys
 import os
+import math
 import re
 import glob
 import multiprocessing
@@ -74,13 +75,14 @@ class AutoRouteHandler:
                 if not self.DEM_FOLDER and self.EXTENT:
                     strms = {strm for strm in strms if self.is_in_extent(strm, self.EXTENT)}
                 if strms and self.SIMULATION_FLOWFILE:
-                    sim_flows_files = pool.map(self.create_row_col_id_file, strms)
+                    sim_flow_files = pool.map(self.create_row_col_id_file, strms)
 
                 if self.FLOOD_FLOWFILE:
                     flood_files = pool.map(self.create_flood_flowfile, strms)
-
-                # if self.AUTOROUTE:
-                #     mifns = pool.map(self.create_mifn_file, dems)
+                
+                pairs = {(d, s, l, sf, f) for d, s, l, sf, f in zip(sorted(dems), sorted(strms), sorted(lus), sorted(sim_flow_files), sorted(flood_files))}
+                if self.AUTOROUTE:
+                    mifns = pool.starmap(self.create_mifn_file, pairs)
         
     def setup(self, yaml_file) -> None:
         """
@@ -111,6 +113,9 @@ class AutoRouteHandler:
             mifns
                 FABDEM__v1-1
                     - 1.txt
+            meta_files
+                FABDEM__v1-1
+                    - 1.txt
         """
         # Read the yaml file and get variables out of it
         self.DATA_DIR = ""
@@ -130,12 +135,58 @@ class AutoRouteHandler:
         self.STREAM_ID = ""
         self.BASE_FLOW_COLUMN = ""
         self.LAND_USE_NAME = ""
+        self.MANNINGS_TABLE = ""
 
         self.AUTOROUTE = ""
         self.FLOODSPREADER = ""
         self.AUTOROUTE_CONDA_ENV = ""
 
         self.RAPID_Subtract_BaseFlow = False
+        self.VDT = ""
+        self.num_iterations = 15
+        self.convert_cfs_to_cms = False
+        self.x_distance = 1000
+        self.q_limit = 1.1
+        self.direction_distance = 1
+        self.slope_distance = 1
+        self.weight_angles = 0
+        self.use_prev_d_4_xs = 1
+        self.adjust_flow = 1
+        self.Str_Limit_Val = 0
+        self.UP_Str_Limit_Val = float('inf')
+        self.row_start = 0
+        self.row_end = float('inf')
+        self.degree_manip = 0.0
+        self.degree_interval = 0.0
+        self.man_n = 0.01
+        self.low_spot_distance = 2
+        self.low_spot_is_meters = False
+        self.low_spot_use_box = False
+        self.box_size = 1
+        self.find_flat = False
+        self.low_spot_find_flat_cutoff = float('inf')
+        self.ar_bathy = False
+        self.bathy_alpha = 0.001
+        self.bathy_method = ''
+        self.bathy_x_max_depth = 0.2
+        self.bathy_y_shallow = 0.2
+        self.da_flow_param = ''
+        self.omit_outliers = ''
+        self.wse_search_dist = 10
+        self.wse_threshold = 0.25
+        self.wse_remove_three = False
+        self.specify_depth = 0
+        self.twd_factor = 1.5
+        self.only_streams = False
+        self.use_ar_top_widths = False
+        self.flood_local = False
+        self.DEPTH_MAP = ''
+        self.FLOOD_MAP = ''
+        self.VELOCITY_MAP = ''
+        self.WSE_MAP = ''
+        self.fs_bathy = False
+        self.fs_bathy_smooth_method = ''
+        self.bathy_twd_factor = 1
 
         if isinstance(yaml_file, dict):
             for key, value in yaml_file.items():
@@ -164,6 +215,7 @@ class AutoRouteHandler:
         os.makedirs(os.path.join(self.DATA_DIR,'mifns'), exist_ok = True)
         os.makedirs(os.path.join(self.DATA_DIR,'stream_reference_files'), exist_ok=True)
         os.makedirs(os.path.join(self.DATA_DIR,'tmp'), exist_ok=True)
+        os.makedirs(os.path.join(self.DATA_DIR, 'meta_files'), exist_ok=True)
 
     def buffer(self) -> None:
         pass
@@ -333,7 +385,7 @@ class AutoRouteHandler:
         strm = os.path.join(self.DATA_DIR, 'stream_files', f"{self.DEM_NAME}__{self.STREAM_NAME}")
         os.makedirs(strm, exist_ok=True)
         strm = os.path.join(strm, f"{os.path.basename(dem).split('.')[0]}__strm.tif")
-        if not self.OVERWRITE and not os.path.exists(strm):
+        if not self.OVERWRITE and os.path.exists(strm):
             logging.info(f"{strm} already exists. Skipping...")
             return strm
         
@@ -401,7 +453,7 @@ class AutoRouteHandler:
         row_col_file = os.path.join(self.DATA_DIR, 'rapid_files', f"{self.DEM_NAME}__{self.STREAM_NAME}")
         os.makedirs(row_col_file, exist_ok=True)
         row_col_file = os.path.join(row_col_file, f"{os.path.basename(strm).split('.')[0]}__row_col_id.txt")
-        if not self.OVERWRITE and not os.path.exists(row_col_file):
+        if not self.OVERWRITE and os.path.exists(row_col_file):
             logging.info(f"{row_col_file} already exists. Skipping...")
             return row_col_file
 
@@ -458,7 +510,7 @@ class AutoRouteHandler:
         flowfile = os.path.join(self.DATA_DIR, 'flow_files', f"{self.DEM_NAME}__{self.STREAM_NAME}")
         os.makedirs(flowfile, exist_ok=True)
         flowfile = os.path.join(flowfile, f"{os.path.basename(strm).split('.')[0]}__flow.txt")
-        if not self.OVERWRITE and not os.path.exists(flowfile):
+        if not self.OVERWRITE and os.path.exists(flowfile):
             logging.info(f"{flowfile} already exists. Skipping...")
             return flowfile
 
@@ -496,7 +548,7 @@ class AutoRouteHandler:
         lu_file = os.path.join(self.DATA_DIR, 'land_use', f"{self.DEM_NAME}__{self.LAND_USE_NAME}")
         os.makedirs(lu_file, exist_ok=True)
         lu_file = os.path.join(lu_file, f"{os.path.basename(dem).split('.')[0]}__lu.vrt")
-        if not self.OVERWRITE and not os.path.exists(lu_file):
+        if not self.OVERWRITE and os.path.exists(lu_file):
             logging.info(f"{lu_file} already exists. Skipping...")
             return lu_file
         dem_ds = self.open_w_gdal(dem)
@@ -618,200 +670,237 @@ class AutoRouteHandler:
         gdal.BuildVRT(cropped_dem, dem, options=vrt_options)
         return cropped_dem
             
-    # def create_mifn_file(self, dem: str) -> str:
-    #     # Format path strings
-    #     dem = self._format_files(dem)
-    #     strm, lu, rapid_flow_file, flow
+    def create_mifn_file(self, 
+                         dem: str, 
+                         strm: str, 
+                         lu: str, 
+                         rapid_flow_file: str, 
+                         flowfile: str) -> str:
+        # Format path strings
+        dem = self._format_files(dem)
+        mifn = os.path.join(self.DATA_DIR, 'mifns', f"{self.DEM_NAME}__{self.STREAM_NAME}")
+        os.makedirs(mifn, exist_ok=True)
+        mifn = os.path.join(mifn, f"{os.path.basename(dem).split('.')[0]}__mifn.txt")
         
-    #     if os.path.exists(mifn):
-    #         logging.warning(f'Overwriting main input file: {mifn}')
+        if not self.OVERWRITE and os.path.exists(mifn):
+            return mifn
         
-    #     if not isinstance(meta_file, bool) and os.path.exists(meta_file):
-    #         logging.warning(f'This will overwrite: {meta_file}')
+        meta_file = os.path.join(self.DATA_DIR, 'meta_files', f"{self.DEM_NAME}__{self.STREAM_NAME}")
+        os.makedirs(meta_file, exist_ok=True)
+        meta_file = os.path.join(meta_file, f"{os.path.basename(dem).split('.')[0]}__meta.txt")
 
-    #     with open(mifn, 'w') as f:
-    #         self._warn_DNE('DEM', dem)
-    #         self._check_type('DEM', dem, ['.tif'])
-    #         self._write(f,'DEM_File',dem)
+        with open(mifn, 'w') as f:
+            self._warn_DNE('DEM', dem)
+            self._check_type('DEM', dem, ['.tif'])
+            self._write(f,'DEM_File',dem)
 
-    #         f.write('\n')
-    #         self._write(f,'# AutoRoute Inputs')
-    #         f.write('\n')
+            f.write('\n')
+            self._write(f,'# AutoRoute Inputs')
+            f.write('\n')
 
-    #         if strm:
-    #             strm = self._format_files(strm)
-    #             self._warn_DNE('Stream File', strm)
-    #             self._check_type('Stream Fil', strm, ['.tif'])
-    #             self._write(f,'Stream_File',strm)
+            if strm:
+                strm = self._format_files(strm)
+                self._warn_DNE('Stream File', strm)
+                self._check_type('Stream Fil', strm, ['.tif'])
+                self._write(f,'Stream_File',strm)
 
-    #         #self._write(f,'Spatial_Units',spatial_units)
+            # Open DEM to see if projected or geographic units
+            ds = gdal.Open(dem)
+            srs = osr.SpatialReference(wkt=ds.GetProjection())
+            nrows = ds.RasterYSize()
+            ds = None
+            if srs.IsProjected():
+                units = srs.GetLinearUnitsName().lower()
+                if "meter" in units:
+                    if "k" in units:
+                        self._write(f,'Spatial_Units',"km")
+                    else:
+                        self._write(f,'Spatial_Units',"m")
+                else:
+                    raise ValueError(f"Unsupported units: {units}")
+            else:
+                units = srs.GetAngularUnitsName().lower()
+                if "degree" in units:
+                    self._write(f,'Spatial_Units',"deg")
+                else:
+                    raise ValueError(f"Unsupported units: {units}")
 
-    #         if flow_file:
-    #             flow_file = self._format_files(flow_file)
-    #             self._warn_DNE('Flow File', flow_file)
-    #             self._check_type('Flow File', flow_file, ['.txt'])
-    #             self._write(f,'Flow_RAPIDFile',flow_file)
+            if rapid_flow_file:
+                rapid_flow_file = self._format_files(rapid_flow_file)
+                self._warn_DNE('Flow File', rapid_flow_file)
+                self._check_type('Flow File', rapid_flow_file, ['.txt'])
+                self._write(f,'Flow_RAPIDFile',rapid_flow_file)
 
-    #             self._write(f,'RowCol_From_RAPIDFile')
-    #             if not self.ID_COLUMN:
-    #                 logging.warning('Flow ID is not specified!!')
-    #             else:
-    #                 self._write(f,'RAPID_Flow_ID', self.ID_COLUMN)
-    #             if not self.FLOW_COLUMN:
-    #                 logging.warning('Flow Params are not specified!!')
-    #             else:
-    #                 if not isinstance(self.FLOW_COLUMN, list):
-    #                     self.FLOW_COLUMN = [self.FLOW_COLUMN]
-    #                 self._write(f,'RAPID_Flow_Param', " ".join(self.FLOW_COLUMN))
-    #             if self.RAPID_Subtract_BaseFlow:
-    #                 if not self.BASE_FLOW_COLUMN:
-    #                     logging.warning('Base Flow Parameter is not specified, not subtracting baseflow')
-    #                 else:
-    #                     self._write(f,'RAPID_BaseFlow_Param',self.BASE_FLOW_COLUMN)
-    #                     self._write(f,'RAPID_Subtract_BaseFlow')
+                self._write(f,'RowCol_From_RAPIDFile')
+                if not self.ID_COLUMN:
+                    logging.warning('Flow ID is not specified!!')
+                else:
+                    self._write(f,'RAPID_Flow_ID', self.ID_COLUMN)
+                if not self.FLOW_COLUMN:
+                    logging.warning('Flow Params are not specified!!')
+                else:
+                    if not isinstance(self.FLOW_COLUMN, list):
+                        self.FLOW_COLUMN = [self.FLOW_COLUMN]
+                    self._write(f,'RAPID_Flow_Param', " ".join(self.FLOW_COLUMN))
+                if self.RAPID_Subtract_BaseFlow:
+                    if not self.BASE_FLOW_COLUMN:
+                        logging.warning('Base Flow Parameter is not specified, not subtracting baseflow')
+                    else:
+                        self._write(f,'RAPID_BaseFlow_Param',self.BASE_FLOW_COLUMN)
+                        self._write(f,'RAPID_Subtract_BaseFlow')
 
-    #         if vdt:
-    #             vdt = self._format_files(vdt)
-    #             self._check_type('VDT', vdt, ['.txt'])
-    #             self._write(f,'Print_VDT_Database',vdt)
-    #             self._write(f,'Print_VDT_Database_NumIterations',num_iterations)
+            if self.VDT:
+                vdt = os.path.join(self.VDT, f"{os.path.basename(dem).split('.')[0]}__vdt.txt")
+            else:
+                vdt = os.path.join(self.DATA_DIR, 'vdts', f"{self.DEM_NAME}__{self.STREAM_NAME}", f"{os.path.basename(dem).split('.')[0]}__vdt.txt")
+            vdt = self._format_files(vdt)
+            self._check_type('VDT', vdt, ['.txt'])
+            self._write(f,'Print_VDT_Database',vdt)
+            self._write(f,'Print_VDT_Database_NumIterations',self.num_iterations)
 
-    #         if meta_file:
-    #             meta_file = self._format_files(meta_file)
-    #             self._write(f,'Meta_File',meta_file)
+            meta_file = self._format_files(meta_file)
+            self._write(f,'Meta_File',meta_file)
 
-    #         if convert_cfs_to_cms: self._write(f,'CONVERT_Q_CFS_TO_CMS')
+            if self.convert_cfs_to_cms: self._write(f,'CONVERT_Q_CFS_TO_CMS')
 
-    #         self._write(f,'X_Section_Dist',x_distance)
-    #         self._write(f,'Q_Limit',q_limit)
-    #         self._write(f,'Gen_Dir_Dist',direction_distance)
-    #         self._write(f,'Gen_Slope_Dist',slope_distance)
-    #         self._write(f,'Weight_Angles',weight_angles)
-    #         self._write(f,'Use_Prev_D_4_XS',use_prev_d_4_xs)
-    #         self._write(f,'ADJUST_FLOW_BY_FRACTION',adjust_flow)
-    #         if Str_Limit_Val: self._write(f,'Str_Limit_Val',Str_Limit_Val)
-    #         if UP_Str_Limit_Val: self._write(f,'UP_Str_Limit_Val',UP_Str_Limit_Val)
-    #         if row_start: self._write(f,'Layer_Row_Start',row_start)
-    #         if row_end: self._write(f,'Layer_Row_End',row_end)
+            self._write(f,'X_Section_Dist',self.x_distance)
+            self._write(f,'Q_Limit',self.q_limit)
+            self._write(f,'Gen_Dir_Dist',self.direction_distance)
+            self._write(f,'Gen_Slope_Dist',self.slope_distance)
+            self._write(f,'Weight_Angles',self.weight_angles)
+            self._write(f,'Use_Prev_D_4_XS',self.use_prev_d_4_xs)
+            self._write(f,'ADJUST_FLOW_BY_FRACTION',self.adjust_flow)
+            if self.Str_Limit_Val: self._write(f,'Str_Limit_Val',self.Str_Limit_Val)
+            if math.isinf(self.UP_Str_Limit_Val): self._write(f,'UP_Str_Limit_Val',self.UP_Str_Limit_Val)
+            if self.row_start: self._write(f,'Layer_Row_Start',self.row_start)
+            if self.row_end < nrows: self._write(f,'Layer_Row_End',self.row_end)
 
-    #         if degree_manip > 0 and degree_interval > 0:
-    #             self._write(f,'Degree_Manip',degree_manip)
-    #             self._write(f,'Degree_Interval',degree_interval)
+            if self.degree_manip > 0 and self.degree_interval > 0:
+                self._write(f,'Degree_Manip',self.degree_manip)
+                self._write(f,'Degree_Interval',self.degree_interval)
 
-    #         if lu_raster:
-    #             lu_raster = self._format_files(lu_raster)
-    #             self._warn_DNE('Land Use', lu_raster)
-    #             self._check_type('Land Use', lu_raster, ['.tif'])
-    #             if is_lu_same_as_dem:
-    #                 self._write(f,'LU_Raster_SameRes',lu_raster)
-    #             else:
-    #                 self._write(f,'LU_Raster',lu_raster)
-    #             if not mannings_table:
-    #                 logging.warning('No mannings table for the Land Use raster!')
-    #             else:
-    #                 mannings_table = self._format_files(mannings_table)
-    #                 self._write(f,'LU_Manning_n',mannings_table)
-    #         else:
-    #             self._write(f,'Man_n',man_n)
+            if lu:
+                lu_raster = self._format_files(lu)
+                self._warn_DNE('Land Use', lu_raster)
+                self._check_type('Land Use', lu_raster, ['.tif'])
+                self._write(f,'LU_Raster_SameRes',lu_raster)
+                if not self.mannings_table:
+                    logging.warning('No mannings table for the Land Use raster!')
+                else:
+                    mannings_table = self._format_files(self.mannings_table)
+                    self._write(f,'LU_Manning_n',mannings_table)
+            else:
+                self._write(f,'Man_n',self.man_n)
 
-    #         if low_spot_distance:
-    #             if low_spot_is_meters:
-    #                 self._write(f,'Low_Spot_Dist_m',low_spot_distance)
-    #             else:
-    #                 self._write(f,'Low_Spot_Range',low_spot_distance)
-    #             if low_spot_use_box:
-    #                 self._write(f,'Low_Spot_Range_Box')
-    #                 self._write(f,'Low_Spot_Range_Box_Size',box_size)
+            if self.low_spot_distance is not None:
+                if self.low_spot_is_meters:
+                    self._write(f,'Low_Spot_Dist_m',self.low_spot_distance)
+                else:
+                    self._write(f,'Low_Spot_Range',self.low_spot_distance)
+                if self.low_spot_use_box:
+                    self._write(f,'Low_Spot_Range_Box')
+                    self._write(f,'Low_Spot_Range_Box_Size',self.box_size)
             
-    #         if find_flat:
-    #             if low_spot_find_flat_cutoff:
-    #                 self._write(f,'Low_Spot_Find_Flat')
-    #                 self._write(f,'Low_Spot_Range_FlowCutoff',low_spot_find_flat_cutoff)
-    #             else:
-    #                 logging.warning('Low Spot Range cutoff was not defined')
+            if self.find_flat:
+                self._write(f,'Low_Spot_Find_Flat')
+                if self.low_spot_find_flat_cutoff < float('inf'):
+                    self._write(f,'Low_Spot_Range_FlowCutoff',self.low_spot_find_flat_cutoff)
 
-    #         if bathy_file:
-    #             bathy_file = self._format_files(bathy_file)
-    #             self._write(f,'BATHY_Out_File',bathy_file)
-    #             self._write(f,'Bathymetry_Alpha',bathy_alpha)
+            if self.ar_bathy:
+                bathy_file = os.path.join(self.DATA_DIR, 'ar_bathy')
+                os.makedirs(bathy_file, exist_ok=True)
+                bathy_file = os.path.join(bathy_file, f"{os.path.basename(dem).split('.')[0]}__ar_bathy.txt")
+                self._write(f,'BATHY_Out_File',bathy_file)
+                self._write(f,'Bathymetry_Alpha',self.bathy_alpha)
 
-    #             if bathy_method == 'Parabolic':
-    #                 self._write(f,'Bathymetry_Method',0)
-    #             elif bathy_method == 'Left Bank Quadratic':
-    #                 self._write(f,'Bathymetry_Method', 1)
-    #                 self._write(f,'Bathymetry_XMaxDepth',bathy_x_max_depth)
-    #                 self._write(f,'Bathymetry_YShallow',bathy_y_shallow)
-    #             elif bathy_method == 'Right Bank Quadratic':
-    #                 self._write(f,'Bathymetry_Method', 2)
-    #                 self._write(f,'Bathymetry_XMaxDepth',bathy_x_max_depth)
-    #                 self._write(f,'Bathymetry_YShallow',bathy_y_shallow)
-    #             elif bathy_method == 'Double Quadratic':
-    #                 self._write(f,'Bathymetry_Method', 3)
-    #                 self._write(f,'Bathymetry_XMaxDepth',bathy_x_max_depth)
-    #                 self._write(f,'Bathymetry_YShallow',bathy_y_shallow)
-    #             elif bathy_method == 'Trapezoidal':
-    #                 self._write(f,'Bathymetry_Method', 4)
-    #                 self._write(f,'Bathymetry_XMaxDepth',bathy_x_max_depth)
-    #             else: self._write(f,'Bathymetry_Method', 5)
+                if self.bathy_method == 'Parabolic':
+                    self._write(f,'Bathymetry_Method',0)
+                elif self.bathy_method == 'Left Bank Quadratic':
+                    self._write(f,'Bathymetry_Method', 1)
+                    self._write(f,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
+                    self._write(f,'Bathymetry_YShallow',self.bathy_y_shallow)
+                elif self.bathy_method == 'Right Bank Quadratic':
+                    self._write(f,'Bathymetry_Method', 2)
+                    self._write(f,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
+                    self._write(f,'Bathymetry_YShallow',self.bathy_y_shallow)
+                elif self.bathy_method == 'Double Quadratic':
+                    self._write(f,'Bathymetry_Method', 3)
+                    self._write(f,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
+                    self._write(f,'Bathymetry_YShallow',self.bathy_y_shallow)
+                elif self.bathy_method == 'Trapezoidal':
+                    self._write(f,'Bathymetry_Method', 4)
+                    self._write(f,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
+                else: self._write(f,'Bathymetry_Method', 5)
 
-    #             if da_flow_param: self._write(f, 'RAPID_DA_or_Flow_Param',da_flow_param)
+                if self.da_flow_param: self._write(f, 'RAPID_DA_or_Flow_Param',self.da_flow_param)
 
-    #         f.write('\n')
-    #         self._write(f,'# FloodSpreader Inputs')
-    #         f.write('\n')
+            f.write('\n')
+            self._write(f,'# FloodSpreader Inputs')
+            f.write('\n')
 
-    #         if id_flow_file:
-    #             id_flow_file = self._format_files(id_flow_file)
-    #             self._warn_DNE('ID Flow File', id_flow_file)
-    #             self._check_type('ID Flow File', id_flow_file, ['.txt','.csv'])
-    #             self._write(f,'Comid_Flow_File',id_flow_file)
+            if flowfile:
+                id_flow_file = self._format_files(flowfile)
+                self._warn_DNE('ID Flow File', id_flow_file)
+                self._check_type('ID Flow File', id_flow_file, ['.txt','.csv'])
+                self._write(f,'Comid_Flow_File',id_flow_file)
 
-    #         if omit_outliers == 'Flood Bad Cells':
-    #             self._write(f,'Flood_BadCells')
-    #         elif omit_outliers == 'Use AutoRoute Depths':
-    #             self._write(f,'FloodSpreader_Use_AR_Depths')
-    #         elif omit_outliers == 'Smooth Water Surface Elevation':
-    #             self._write(f,'FloodSpreader_SmoothWSE_SearchDist',wse_search_dist)
-    #             self._write(f,'FloodSpreader_SmoothWSE_FractStDev',wse_threshold)
-    #             self._write(f,'FloodSpreader_SmoothWSE_RemoveHighThree',wse_remove_three)
-    #         elif omit_outliers == 'Use AutoRoute Depths (StDev)':
-    #             self._write(f,'FloodSpreader_Use_AR_Depths_StDev')
-    #         elif omit_outliers == 'Specify Depth':
-    #             self._write(f,'FloodSpreader_SpecifyDepth',specify_depth)
+            if self.omit_outliers == 'Flood Bad Cells':
+                self._write(f,'Flood_BadCells')
+            elif self.omit_outliers == 'Use AutoRoute Depths':
+                self._write(f,'FloodSpreader_Use_AR_Depths')
+            elif self.omit_outliers == 'Smooth Water Surface Elevation':
+                self._write(f,'FloodSpreader_SmoothWSE_SearchDist',self.wse_search_dist)
+                self._write(f,'FloodSpreader_SmoothWSE_FractStDev',self.wse_threshold)
+                if self.wse_remove_three:
+                    self._write(f,'FloodSpreader_SmoothWSE_RemoveHighThree')
+            elif self.omit_outliers == 'Use AutoRoute Depths (StDev)':
+                self._write(f,'FloodSpreader_Use_AR_Depths_StDev')
+            elif self.omit_outliers == 'Specify Depth' and self.specify_depth:
+                self._write(f,'FloodSpreader_SpecifyDepth',self.specify_depth)
+            else:
+                logging.warning(f'Unknowne outlier omission option: {self.omit_outliers}')
 
-    #         self._write(f,'TopWidthDistanceFactor',twd_factor)
-    #         if only_streams: self._write(f,'FloodSpreader_JustStrmDepths')
-    #         if use_ar_top_widths: self._write(f,'FloodSpreader_Use_AR_TopWidth')
-    #         if flood_local: self._write(f,'FloodLocalOnly')
+            self._write(f,'TopWidthDistanceFactor',self.twd_factor)
+            if self.only_streams: self._write(f,'FloodSpreader_JustStrmDepths')
+            if self.use_ar_top_widths: self._write(f,'FloodSpreader_Use_AR_TopWidth')
+            if self.flood_local: self._write(f,'FloodLocalOnly')
 
-    #         if depth_map:
-    #             depth_map = self._format_files(depth_map)
-    #             self._check_type('Depth Map',depth_map,['.tif'])
-    #             self._write(f,'OutDEP',depth_map)
+            if self.DEPTH_MAP:
+                depth_map = self._format_files(os.path.join(self.DEPTH_MAP, f"{os.path.basename(dem).split('.')[0]}__depth.tif"))
+                if self.OVERWRITE or not os.path.exists(depth_map):
+                    self._check_type('Depth Map',depth_map,['.tif'])
+                    self._write(f,'OutDEP',depth_map)
 
-    #         if flood_map:
-    #             flood_map =self._format_files(flood_map)
-    #             self._check_type('Flood Map',flood_map,['.tif'])
-    #             self._write(f,'OutFLD',flood_map)
+            if self.FLOOD_MAP:
+                flood_map = self._format_files(os.path.join(self.FLOOD_MAP, f"{os.path.basename(dem).split('.')[0]}__flood.tif"))
+                if self.OVERWRITE or not os.path.exists(flood_map):
+                    self._check_type('Flood Map',flood_map,['.tif'])
+                    self._write(f,'OutFLD',flood_map)
 
-    #         if velocity_map:
-    #             velocity_map = self._format_files(velocity_map)
-    #             self._check_type('Velocity Map',velocity_map,['.tif'])
-    #             self._write(f,'OutVEL',velocity_map)
+            if self.VELOCITY_MAP:
+                velocity_map = self._format_files(os.path.join(self.VELOCITY_MAP, f"{os.path.basename(dem).split('.')[0]}__vel.tif"))
+                if self.OVERWRITE or not os.path.exists(velocity_map):
+                    self._check_type('Velocity Map',velocity_map,['.tif'])
+                    self._write(f,'OutVEL',velocity_map)
 
-    #         if wse_map:
-    #             wse_map = self._format_files(wse_map)
-    #             self._check_type('WSE Map',wse_map,['.tif'])
-    #             self._write(f,'OutWSE',wse_map)
+            if self.WSE_MAP:
+                wse_map = self._format_files(os.path.join(self.WSE_MAP, f"{os.path.basename(dem).split('.')[0]}__wse.tif"))
+                if self.OVERWRITE or not os.path.exists(wse_map):
+                    self._check_type('WSE Map',wse_map,['.tif'])
+                    self._write(f,'OutWSE',wse_map)
 
-    #         if fs_bathy_file and bathy_file: 
-    #             fs_bathy_file = self._format_files(fs_bathy_file)
-    #             self._check_type('FloodSpreader Generated Bathymetry',fs_bathy_file,['.tif'])
-    #             self._write(f,'FSOutBATHY', fs_bathy_file)
-    #             if fs_bathy_smooth_method == 'Linear Interpolation':
-    #                 self._write(f,'Bathy_LinearInterpolation')
-    #             elif fs_bathy_smooth_method == 'Inverse-Distance Weighted':
-    #                 self._write(f,'BathyTopWidthDistanceFactor', bathy_twd_factor)
+            if self.fs_bathy and self.ar_bathy: 
+                fs_bathy_file = os.path.join(self.DATA_DIR, "bathy_fs")
+                os.makedirs(fs_bathy_file, exist_ok=True)
+                fs_bathy_file = os.path.join(fs_bathy_file, f"{os.path.basename(dem).split('.')[0]}__fs_bathy.tif")
+                self._check_type('FloodSpreader Generated Bathymetry',fs_bathy_file,['.tif'])
+                self._write(f,'FSOutBATHY', fs_bathy_file)
+                if self.fs_bathy_smooth_method == 'Linear Interpolation':
+                    self._write(f,'Bathy_LinearInterpolation')
+                elif self.fs_bathy_smooth_method == 'Inverse-Distance Weighted':
+                    self._write(f,'BathyTopWidthDistanceFactor', self.bathy_twd_factor)
+
+        return mifn
 
     def _format_files(self,file_path: str) -> str:
         """
