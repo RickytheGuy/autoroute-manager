@@ -7,7 +7,8 @@ DEM_NAME: "DR_full" # Name representing these DEM files
 STREAM_NETWORK_FOLDER: "/Users/ricky/Downloads/streams_718" # Path to folder containing stream centerline files
 STREAM_NAME: "V2_streams" # Name representing the stream centerline files
 STREAM_ID: "LINKNO" # ID field in the stream centerline files
-FLOWFILE: "/Users/ricky/Desktop/MAC/MAC/FlowFile/DR_DEM_FULL_Flow_COMID_Q.txt" # Filepath which has an ID column, a flow column, and optionall a base flow column
+SIMULATION_FLOWFILE: "/Users/ricky/Desktop/MAC/MAC/FlowFile/DR_DEM_FULL_Flow_COMID_Q.txt" # Filepath which has an ID column, a flow column, and optionall a base flow column
+FLOOD_FLOWFILE: "" # Filepath which has an ID column and a flow column. These are the flows that will be used to generate floodmaps
 ID_COLUMN: "DR_full" # Column name in the flow file that represents the IDs of the streams
 FLOW_COLUMN: "DR_Histori" # Column name in the flow file that represents the flow of the streams. If blank, all columns besides the ID column will be used
 BASE_FLOW_COLUMN: "" # Column name in the flow file that represents the base flow of the streams. If blank, no other columns will be added. Ignored if FLOW_COLUMN is blank
@@ -19,4 +20,9 @@ LAND_USE_NAME: "" # Name representing the land use files
 
 AUTOROUTE: "C:\Users\lrr43\Desktop\Lab\MichiganTest\AutoRoute_w_GDAL.exe" # Path to AutoRoute executable
 FLOODSPREADER: "C:\Users\lrr43\Desktop\Lab\MichiganTest\AutoRoute_FloodSpreader.exe" # Path to FloodSpreader executable
+AUTOROUTE_CONDA_ENV: "autoroute"
+
+RAPID_Subtract_BaseFlow: true
+
+
 
