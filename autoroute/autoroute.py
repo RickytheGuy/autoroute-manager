@@ -5,7 +5,10 @@ import math
 import re
 import glob
 import multiprocessing
-from typing import Tuple, Any, List
+from typing import Tuple, Any, List, Set
+import tqdm
+import subprocess
+import asyncio
 
 import geopandas as gpd
 import pandas as pd
@@ -60,6 +63,7 @@ class AutoRouteHandler:
         if self.EXTENT:
             dems = {dem for dem in dems if self.is_in_extent(dem, self.EXTENT)}
         processes = max(min(len(dems), os.cpu_count()), 1)
+        mifns = None
         if processes > 0:
             with multiprocessing.Pool(processes=processes) as pool:
                 if self.CROP and self.EXTENT:
@@ -80,9 +84,19 @@ class AutoRouteHandler:
                 if self.FLOOD_FLOWFILE:
                     flood_files = pool.map(self.create_flood_flowfile, strms)
                 
-                pairs = {(d, s, l, sf, f) for d, s, l, sf, f in zip(sorted(dems), sorted(strms), sorted(lus), sorted(sim_flow_files), sorted(flood_files))}
-                if self.AUTOROUTE:
+                pairs = self._zip_files(dems, strms, lus, sim_flow_files, flood_files)
+                if self.AUTOROUTE or self.FLOODSPREADER:
                     mifns = pool.starmap(self.create_mifn_file, pairs)
+
+        if mifns and (self.AUTOROUTE or self.FLOODSPREADER):
+            processes = min(len(mifns), os.cpu_count())
+            with multiprocessing.Pool(processes=processes) as pool:
+                if self.AUTOROUTE:
+                    results = tqdm.tqdm(pool.imap_unordered(self.run_autoroute, mifns))
+                    for res in results:
+                        print(results)
+
+
         
     def setup(self, yaml_file) -> None:
         """
@@ -691,7 +705,7 @@ class AutoRouteHandler:
 
         with open(mifn, 'w') as f:
             self._warn_DNE('DEM', dem)
-            self._check_type('DEM', dem, ['.tif'])
+            self._check_type('DEM', dem, ['.tif','.vrt'])
             self._write(f,'DEM_File',dem)
 
             f.write('\n')
@@ -701,13 +715,13 @@ class AutoRouteHandler:
             if strm:
                 strm = self._format_files(strm)
                 self._warn_DNE('Stream File', strm)
-                self._check_type('Stream Fil', strm, ['.tif'])
+                self._check_type('Stream Fil', strm, ['.tif', '.vrt'])
                 self._write(f,'Stream_File',strm)
 
             # Open DEM to see if projected or geographic units
             ds = gdal.Open(dem)
             srs = osr.SpatialReference(wkt=ds.GetProjection())
-            nrows = ds.RasterYSize()
+            nrows = ds.RasterYSize
             ds = None
             if srs.IsProjected():
                 units = srs.GetLinearUnitsName().lower()
@@ -767,11 +781,12 @@ class AutoRouteHandler:
             self._write(f,'Q_Limit',self.q_limit)
             self._write(f,'Gen_Dir_Dist',self.direction_distance)
             self._write(f,'Gen_Slope_Dist',self.slope_distance)
-            self._write(f,'Weight_Angles',self.weight_angles)
+            if self.weight_angles:
+                self._write(f,'Weight_Angles',self.weight_angles)
             self._write(f,'Use_Prev_D_4_XS',self.use_prev_d_4_xs)
             self._write(f,'ADJUST_FLOW_BY_FRACTION',self.adjust_flow)
             if self.Str_Limit_Val: self._write(f,'Str_Limit_Val',self.Str_Limit_Val)
-            if math.isinf(self.UP_Str_Limit_Val): self._write(f,'UP_Str_Limit_Val',self.UP_Str_Limit_Val)
+            if not math.isinf(self.UP_Str_Limit_Val): self._write(f,'UP_Str_Limit_Val',self.UP_Str_Limit_Val)
             if self.row_start: self._write(f,'Layer_Row_Start',self.row_start)
             if self.row_end < nrows: self._write(f,'Layer_Row_End',self.row_end)
 
@@ -782,12 +797,12 @@ class AutoRouteHandler:
             if lu:
                 lu_raster = self._format_files(lu)
                 self._warn_DNE('Land Use', lu_raster)
-                self._check_type('Land Use', lu_raster, ['.tif'])
+                self._check_type('Land Use', lu_raster, ['.tif', '.vrt'])
                 self._write(f,'LU_Raster_SameRes',lu_raster)
-                if not self.mannings_table:
+                if not self.MANNINGS_TABLE:
                     logging.warning('No mannings table for the Land Use raster!')
                 else:
-                    mannings_table = self._format_files(self.mannings_table)
+                    mannings_table = self._format_files(self.MANNINGS_TABLE)
                     self._write(f,'LU_Manning_n',mannings_table)
             else:
                 self._write(f,'Man_n',self.man_n)
@@ -844,21 +859,22 @@ class AutoRouteHandler:
                 self._check_type('ID Flow File', id_flow_file, ['.txt','.csv'])
                 self._write(f,'Comid_Flow_File',id_flow_file)
 
-            if self.omit_outliers == 'Flood Bad Cells':
-                self._write(f,'Flood_BadCells')
-            elif self.omit_outliers == 'Use AutoRoute Depths':
-                self._write(f,'FloodSpreader_Use_AR_Depths')
-            elif self.omit_outliers == 'Smooth Water Surface Elevation':
-                self._write(f,'FloodSpreader_SmoothWSE_SearchDist',self.wse_search_dist)
-                self._write(f,'FloodSpreader_SmoothWSE_FractStDev',self.wse_threshold)
-                if self.wse_remove_three:
-                    self._write(f,'FloodSpreader_SmoothWSE_RemoveHighThree')
-            elif self.omit_outliers == 'Use AutoRoute Depths (StDev)':
-                self._write(f,'FloodSpreader_Use_AR_Depths_StDev')
-            elif self.omit_outliers == 'Specify Depth' and self.specify_depth:
-                self._write(f,'FloodSpreader_SpecifyDepth',self.specify_depth)
-            else:
-                logging.warning(f'Unknowne outlier omission option: {self.omit_outliers}')
+            if self.omit_outliers:
+                if self.omit_outliers == 'Flood Bad Cells':
+                    self._write(f,'Flood_BadCells')
+                elif self.omit_outliers == 'Use AutoRoute Depths':
+                    self._write(f,'FloodSpreader_Use_AR_Depths')
+                elif self.omit_outliers == 'Smooth Water Surface Elevation':
+                    self._write(f,'FloodSpreader_SmoothWSE_SearchDist',self.wse_search_dist)
+                    self._write(f,'FloodSpreader_SmoothWSE_FractStDev',self.wse_threshold)
+                    if self.wse_remove_three:
+                        self._write(f,'FloodSpreader_SmoothWSE_RemoveHighThree')
+                elif self.omit_outliers == 'Use AutoRoute Depths (StDev)':
+                    self._write(f,'FloodSpreader_Use_AR_Depths_StDev')
+                elif self.omit_outliers == 'Specify Depth' and self.specify_depth:
+                    self._write(f,'FloodSpreader_SpecifyDepth',self.specify_depth)
+                else:
+                    logging.warning(f'Unknown outlier omission option: {self.omit_outliers}')
 
             self._write(f,'TopWidthDistanceFactor',self.twd_factor)
             if self.only_streams: self._write(f,'FloodSpreader_JustStrmDepths')
@@ -925,3 +941,38 @@ class AutoRouteHandler:
         if not any(value.endswith(t) for t in types):
             logging.warning(f"{card} is {os.path.basename(value)}, which does not have a valid file type ({','.join(types)})")
     
+    def _zip_files(self, *args) -> Set[Tuple[str]]:
+        """"
+        Given a bunch of lists, sort each list so that the filenames match, and create a list of tuples 
+        """
+        # Get max length of all args
+        max_len = max(len(a) for a in args)
+        args = [sorted(a, key=os.path.basename) for a in args]
+        output = set({})
+        for i in range(max_len):
+            out_tuple = []
+            for arg in args:
+                if i < len(arg):
+                    out_tuple.append(arg[i])
+                else:
+                    out_tuple.append("")
+            output.add(tuple(out_tuple))
+
+        return output
+    
+    def run_autoroute(self, mifn: str) -> None:
+        try:
+            exe = self._format_files(self.AUTOROUTE.strip())
+            mifn = self._format_files(mifn.strip())
+            process = subprocess.run(f'conda activate {self.AUTOROUTE_CONDA_ENV} && echo "a" | {exe} {mifn}', # We echo a dummy input in so that AutoRoute can terminate if some input is wrong
+                                     stdout=asyncio.subprocess.PIPE,
+                                     stderr=asyncio.subprocess.PIPE,
+                                     shell=True,)
+        except Exception as e:
+            logging.error(f"Error running autoroute: {e}")
+
+        if process.returncode == 0:
+            logging.info('Program finished')
+            return process.stdout.decode('utf-8')
+        logging.error(f"Error running autoroute: {process.stderr.decode('utf-8')}")
+        return process.stderr.decode('utf-8')

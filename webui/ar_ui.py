@@ -278,7 +278,7 @@ with gr.Blocks(title='AutoRoute WebUI') as demo:
                         with gr.Accordion('Bathymetry', open=False):
                             with gr.Row():
                                 with gr.Column():
-                                    bathy_file = gr.Textbox(
+                                    ar_bathy = gr.Textbox(
                                                 placeholder='/User/Desktop/bathy.tif',
                                                 label="Output Bathymetry File",
                                                 info=hp.docs['BATHY_Out_File']
@@ -388,7 +388,7 @@ with gr.Blocks(title='AutoRoute WebUI') as demo:
                                              inputs=[dem,dem_name, strm_lines, strm_name, lu_file, lu_name, base_max_file, subtract_baseflow, flow_id, flow_params, flow_baseflow, num_iterations,
                                                     meta_file, convert_cfs_to_cms, x_distance, q_limit, mannings_table, direction_distance, slope_distance, low_spot_distance, low_spot_is_meters,
                                                     low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, degree_manip, degree_interval, Str_Limit_Val, UP_Str_Limit_Val, row_start, row_end, use_prev_d_4_xs,
-                                                    weight_angles, man_n, adjust_flow, bathy_alpha, bathy_file, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
+                                                    weight_angles, man_n, adjust_flow, bathy_alpha, ar_bathy, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
                                                     specify_depth, twd_factor, only_streams, use_ar_top_widths, flood_local, depth_map, flood_map, velocity_map, wse_map, fs_bathy_file, da_flow_param,
                                                     bathy_method,bathy_x_max_depth, bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,
                                                     data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file],
