@@ -9,7 +9,6 @@ from typing import Tuple, Any, List
 import geopandas as gpd
 import pandas as pd
 import numpy as np
-import psutil
 import fiona
 import yaml
 from osgeo import gdal, osr
@@ -20,10 +19,6 @@ from pyproj import Transformer
 os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = 'TRUE' # Set to avoid reading really large folders
 os.environ["GDAL_NUM_THREADS"] = 'ALL_CPUS'
 gdal.UseExceptions()
-
-logging.basicConfig(level=logging.INFO,
-                    stream=sys.stdout,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
 
 try:
     import pyogrio
@@ -148,7 +143,7 @@ class AutoRouteHandler:
         pass
 
     def find_dems_in_extent(self, 
-                            extent: list = None) -> list[str]:
+                            extent: list = None) -> List[str]:
         dems = self.find_files(self.DEM_FOLDER)
         if extent:
             dems = [dem for dem in dems if self.is_in_extent(dem, extent)]
@@ -158,7 +153,7 @@ class AutoRouteHandler:
         dems = self.find_dems_in_extent()
         return len(dems)
 
-    def find_files(self, directory: str, type: str = '*.tif') -> list[str]:
+    def find_files(self, directory: str, type: str = '*.tif') -> List[str]:
         tif_files = []
         for root, _, _ in os.walk(directory):
             tif_files.extend(glob.glob(os.path.join(root, type)))
@@ -480,6 +475,9 @@ class AutoRouteHandler:
                 maxx2, maxy2, _ = coordTrans.TransformPoint(maxx, maxy)
                 
             if self.is_in_extent(ds, (minx2, miny2, maxx2, maxy2)):
+                if ds.ReadAsArray().max() > 100:
+                    logging.error(f"Land use file {f} has values over 100. AutoRoute cannot read this. Please reclassify.")
+                    return
                 files_to_use.append(f)
             ds = None
         
@@ -527,9 +525,7 @@ class AutoRouteHandler:
     def get_epsg(self, ds: gdal.Dataset) -> int:
         dem_spatial_ref = ds.GetSpatialRef()
         dem_sr = osr.SpatialReference(str(dem_spatial_ref)) # load projection
-        res = dem_sr.AutoIdentifyEPSG() # identify EPSG
         return int(dem_sr.GetAuthorityCode(None)) # get EPSG code
-        #return int(ds.GetSpatialRef().GetAttrValue('AUTHORITY', 1))
 
 
     def list_to_sublists(self, alist: List[Any], n: int) -> List[List[Any]]:

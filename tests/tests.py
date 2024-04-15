@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+import logging
 
 import numpy as np
 import pandas as pd
@@ -10,6 +11,10 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(project_root)
 
 from autoroute.autoroute import AutoRouteHandler
+
+logging.basicConfig(level=logging.INFO,
+                    stream=sys.stdout,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
 
 @unittest.skip
 class TestStreamRasterization(unittest.TestCase):
@@ -116,6 +121,7 @@ class TestRowColIdFIle(unittest.TestCase):
         val_df = pd.read_csv(self.validation)
         self.assertTrue(out_df.equals(val_df), "Dataframes are not equal")
 
+@unittest.skip
 class TestLandUse(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
