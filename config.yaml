@@ -7,17 +7,69 @@ DEM_NAME: "DR_full" # Name representing these DEM files
 STREAM_NETWORK_FOLDER: "/Users/ricky/Downloads/streams_718" # Path to folder containing stream centerline files
 STREAM_NAME: "V2_streams" # Name representing the stream centerline files
 STREAM_ID: "LINKNO" # ID field in the stream centerline files
-FLOWFILE: "/Users/ricky/Desktop/MAC/MAC/FlowFile/DR_DEM_FULL_Flow_COMID_Q.txt" # Filepath which has an ID column, a flow column, and optionall a base flow column
+SIMULATION_FLOWFILE: "/Users/ricky/Desktop/MAC/MAC/FlowFile/DR_DEM_FULL_Flow_COMID_Q.txt" # Filepath which has an ID column, a flow column, and optionall a base flow column
+FLOOD_FLOWFILE: "" # Filepath which has an ID column and a flow column. These are the flows that will be used to generate floodmaps
 ID_COLUMN: "DR_full" # Column name in the flow file that represents the IDs of the streams
 FLOW_COLUMN: "DR_Histori" # Column name in the flow file that represents the flow of the streams. If blank, all columns besides the ID column will be used
 BASE_FLOW_COLUMN: "" # Column name in the flow file that represents the base flow of the streams. If blank, no other columns will be added. Ignored if FLOW_COLUMN is blank
-EXTENT: [] # Extent of the area to process, in the form [xmin, ymin, xmax, ymax]. If blank or empty, the extent of the DEM will be used
+EXTENT: [] # Extent of the area to process, in the form [xmin, ymin, xmax, ymax]. If blank or empty, the extent of the DEM(s) will be used
+CROP: false # Whether to crop the DEM(s) exactly to the extent given
 LAND_USE_FOLDER: "/Users/ricky/Desktop/MAC/MAC/LAND" # Path to folder containing land use files; optional
+LAND_USE_NAME: "" # Name representing the land use files
+MANNINGS_TABLE: "" # Path to a text file which maps the values in the land use files to mannings n values
+DEPTH_MAP: ""
+FLOOD_MAP: "" 
+VELOCITY_MAP: ""
+WSE_MAP: ""
 
-###### AUTOROUTE ######
-AUTOROUTE: false # Whether to run autoroute
-AUTOROUTE_FOLDER: "/Users/ricky/Desktop/MAC/MAC/AutoRoute" # Path to folder containing autoroute files
-AUTOROUTE_FILE: "DR_full" # Name of the autoroute file
-AUTOROUTE_COLUMN: "DR_full" # Column name in the autoroute file that represents the IDs of the streams
-AUTOROUTE_FLOW_COLUMN: "DR_Histori" # Column name in the autoroute file that represents the flow of the streams. If blank, all columns besides the ID column will be used
+
+AUTOROUTE: "C:\Users\lrr43\Desktop\Lab\MichiganTest\AutoRoute_w_GDAL.exe" # Path to AutoRoute executable
+FLOODSPREADER: "C:\Users\lrr43\Desktop\Lab\MichiganTest\AutoRoute_FloodSpreader.exe" # Path to FloodSpreader executable
+AUTOROUTE_CONDA_ENV: "autoroute"
+
+RAPID_Subtract_BaseFlow: true # Whether to subtract the base flow 
+VDT: "" # Optional output VDT location
+num_iterations : 15
+convert_cfs_to_cms: false
+x_distance: 1000
+q_limit: 1.1
+direction_distance: 1
+slope_distance: 1
+weight_angles: 0
+use_prev_d_4_xs: 1
+adjust_flow: 1
+Str_Limit_Val: 0
+UP_Str_Limit_Val: .inf
+row_start: 0
+row_end: .inf
+degree_manip: 0.0
+degree_interval: 0.0
+man_n: 0.01
+low_spot_distance: 2
+low_spot_is_meters: false
+low_spot_use_box: false
+box_size: 1
+find_flat: false
+low_spot_find_flat_cutoff: .inf
+ar_bathy: true
+bathy_alpha: 0.001
+bathy_method: ''
+bathy_x_max_depth: 0.2
+bathy_y_shallow:  0.2
+da_flow_param: ''
+
+omit_outliers: ''
+wse_search_dist: 10
+wse_threshold: 0.25
+wse_remove_three: false
+specify_depth: 0
+twd_factor: 1.5
+only_streams: false
+use_ar_top_widths: false
+flood_local: false
+fs_bathy: false
+fs_bathy_smooth_method: ''
+bathy_twd_factor: 1
+
+
 
