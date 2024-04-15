@@ -71,16 +71,18 @@ The above made two directories in your conda environment and two files in each d
 
 ```
 #!/bin/sh
-export PATH=$CONDA_PREFIX/envs/autoroute/GDAL:\$PATH
-export GDAL_DATA=$CONDA_PREFIX/envs/autoroute/GDAL/gdal-data
+export PATH=$CONDA_PREFIX/include:$PATH
+export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
+export PKG_CONFIG_PATH=$CONDA_PREFIX/lib/pkgconfig
 ```
 
 And the env_vars.sh in deactivate.d to be: 
 
 ```
 #!/bin/sh
-unset GDAL_DATA=
-export PATH=\$PATH:$CONDA_PREFIX/envs/autoroute/GDAL
+export LD_LIBRARY_PATH=\$LD_LIBRARY_PATH:$CONDA_PREFIX/lib
+export PATH=\$PATH:$CONDA_PREFIX/include
+unset PKG_CONFIG_PATH
 ```
 Make sure all these paths are correct casing.
 
