@@ -284,8 +284,8 @@ class TestAutoRoute(unittest.TestCase):
         self.output = os.path.join("test_ar_data","stream_files","test_dem__test_strm","N18W073_FABDEM_V1-2__strm.tif")
         # self.validation = os.path.join("tests","test_data","validation","rasterization","N18W073_FABDEM_V1-2__strm_val.tif")
         
-    def tearDown(self) -> None:
-        if self.output and os.path.exists(self.output): os.remove(self.output) 
+    # def tearDown(self) -> None:
+    #     if self.output and os.path.exists(self.output): os.remove(self.output) 
 
     def test_AutoRoute(self):
         AutoRouteHandler(self.params).run()

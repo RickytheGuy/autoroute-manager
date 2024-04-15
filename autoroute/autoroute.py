@@ -692,6 +692,8 @@ class AutoRouteHandler:
                          flowfile: str) -> str:
         # Format path strings
         dem = self._format_files(dem)
+        if not os.path.isabs(dem):
+            dem = os.path.abspath(dem)
         mifn = os.path.join(self.DATA_DIR, 'mifns', f"{self.DEM_NAME}__{self.STREAM_NAME}")
         os.makedirs(mifn, exist_ok=True)
         mifn = os.path.join(mifn, f"{os.path.basename(dem).split('.')[0]}__mifn.txt")
