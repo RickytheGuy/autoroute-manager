@@ -28,22 +28,39 @@ gdal.UseExceptions()
 
 SYSTEM = platform.system()
 
-docs_file = 'defaults_and_docs.json'
-if not os.path.exists(docs_file):
-    docs_file = os.path.join(os.path.dirname(__file__), 'defaults_and_docs.json')
-if not os.path.exists(docs_file):
-    gr.Warning('Could not find the defaults_and_docs.json file')
-else:
-    with open(docs_file, 'r', encoding='utf-8') as f:
-        d = json.loads(f.read())[0]
-        docs: Dict[str,str] = d['docs']
-
 class ManagerFacade():
     def init(self) -> None:
         self.manager = AutoRouteHandler(None)
+        docs_file = 'defaults_and_docs.json'
+        docs = None
+        data = None
+        if not os.path.exists(docs_file):
+            docs_file = os.path.join(os.path.dirname(__file__), 'defaults_and_docs.json')
+        if not os.path.exists(docs_file):
+            gr.Warning('Could not find the defaults_and_docs.json file')
+        else:
+            with open(docs_file, 'r', encoding='utf-8') as f:
+                d = json.loads(f.read())[0]
+                docs: Dict[str,str] = d['docs']
+                data: Dict[str,str] = d['data']
+        self.docs = docs
+        self.data = data
         
     async def run(self, **kwargs):
         await self._run(**kwargs)
+
+    def doc(self, key: str) -> str:
+        return self.docs.get(key, 'No documentation available')
+    
+    def default(self, key: str) -> str:
+        return self.data.get(key, None)
+    
+    def save(self, *args) -> None:
+        """
+        Save the modified documentation and defaults
+        """
+        for arg in args:
+            print(arg)
 
     #@staticmethod
     def _format_files(self,file_path: str) -> str:
@@ -73,15 +90,15 @@ class ManagerFacade():
         if value == 'None':
             return gr.Radio(info='None: No outliers will be removed'), gr.Column(visible=False), gr.Number(visible=False)
         elif value == 'Flood Bad Cells':
-            return gr.Radio(info=docs['Flood_BadCells']), gr.Column(visible=False), gr.Number(visible=False)
+            return gr.Radio(info=self.docs['Flood_BadCells']), gr.Column(visible=False), gr.Number(visible=False)
         elif value == 'Use AutoRoute Depths':
-            return gr.Radio(info=docs['FloodSpreader_Use_AR_Depths']), gr.Column(visible=False), gr.Number(visible=False)
+            return gr.Radio(info=self.docs['FloodSpreader_Use_AR_Depths']), gr.Column(visible=False), gr.Number(visible=False)
         elif value == 'Smooth Water Surface Elevation':
-            return  gr.Radio(info=docs['smooth_wse']), gr.Column(visible=True), gr.Number(visible=False)
+            return  gr.Radio(info=self.docs['smooth_wse']), gr.Column(visible=True), gr.Number(visible=False)
         elif value == 'Use AutoRoute Depths (StDev)':
-            return gr.Radio(info=docs['FloodSpreader_Use_AR_Depths_StDev']), gr.Column(visible=False), gr.Number(visible=False)
+            return gr.Radio(info=self.docs['FloodSpreader_Use_AR_Depths_StDev']), gr.Column(visible=False), gr.Number(visible=False)
         else:
-            return gr.Radio(info=docs['FloodSpreader_SpecifyDepth']), gr.Column(visible=False), gr.Number(visible=True)
+            return gr.Radio(info=self.docs['FloodSpreader_SpecifyDepth']), gr.Column(visible=False), gr.Number(visible=True)
 
     def bathy_changes(self,value: str) -> Tuple[gr.Slider, gr.Slider]:
         if value == 'Trapezoidal':
@@ -133,7 +150,7 @@ class ManagerFacade():
         """
         Write the main input file
         """
-        if minx == 0 and miny == 0 and maxx == 0 and maxy == 0:
+        if {minx, miny, maxx, maxy} == {0}:
             extent = None
         else:
             extent = (minx, miny, maxx, maxy)
@@ -146,6 +163,7 @@ class ManagerFacade():
                   "STREAM_NAME": strm_name,
                   "STREAM_ID": flow_id,
                   "SIMULATION_FLOWFILE": base_max_file,
+                  "FLOOD_FLOWFILE":id_flow_file,
                   "ID_COLUMN": flow_id,
                   "FLOW_COLUMN": flow_params,
                   "BASE_FLOW_COLUMN": flow_baseflow,
@@ -208,37 +226,6 @@ class ManagerFacade():
         }
         self.manager.setup(params)
         self.manager.run()
-
-        
-        
-    async def run_exe(self,exe: str, mifn: str) -> None:
-        """
-        Run the executable, printing to terminal
-        """
-        if not exe or not mifn: return
-
-        exe = self._format_files(exe.strip())
-        mifn = self._format_files(mifn.strip())
-        if not os.path.exists(exe):
-            gr.Warning('AutoRoute Executable not found')
-            return
-        if not os.path.exists(mifn):
-            gr.Warning('The Main Input File does not exist')
-            return
-        
-        exe  = self._prepare_exe(exe)
-
-        process = await asyncio.create_subprocess_shell(f'echo "a" | {exe} {mifn}', # We echo a dummy input in so that AutoRoute can terminate if some input is wrong
-                                                        stdout=asyncio.subprocess.PIPE,
-                                                        stderr=asyncio.subprocess.PIPE)
-        while True:
-            line = await process.stdout.readline()
-            if not line: 
-                logging.info('Program finished')
-                break
-            logging.info(line.decode().strip())
-
-        await process.communicate()
         
     def _prepare_exe(self,exe: str) -> str:
         if SYSTEM == "Windows":
@@ -274,6 +261,10 @@ class ManagerFacade():
             maxx = 180
         if maxy is None:
             maxy = 90
+
+        if {minx, miny, maxx, maxy} == {0}: # If all are 0, then we have no data
+            gr.Info("0 means no extent was specified")
+            return
 
         if maxx <= minx:
             gr.Warning('Max X is less than Min X')

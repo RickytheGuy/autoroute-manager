@@ -95,9 +95,7 @@ class AutoRouteHandler:
                     results = tqdm.tqdm(pool.imap_unordered(self.run_autoroute, mifns))
                     for res in results:
                         print(results)
-
-
-        
+ 
     def setup(self, yaml_file) -> None:
         """
         Ensure working folder exists and set up. Each folder contains a folder based on the type of dem used and the stream network
@@ -210,6 +208,7 @@ class AutoRouteHandler:
                 data = yaml.safe_load(f)
                 for key, value in data.items():
                     setattr(self, key, value)
+
         if not self.DATA_DIR:
             logging.error('No working folder provided!')
             return
@@ -430,7 +429,7 @@ class AutoRouteHandler:
                     continue
                 except ValueError as e:
                     logging.error(f"Cannot find {self.STREAM_ID} in {f}")
-                    raise exception.Invalid
+                    raise e
                 
                 if not df.empty:
                     dfs.append(df.to_crs(ds_epsg))
@@ -515,7 +514,7 @@ class AutoRouteHandler:
             pd.DataFrame({'ROW': indices[0], 'COL': indices[1], self.ID_COLUMN: values})
             .merge(df, on=self.ID_COLUMN, how='left')
             .fillna(0)
-            .to_csv(row_col_file, sep=" ", index=False)
+            .to_csv(row_col_file, sep="\t", index=False)
         )
         logging.info("Finished stream file")
         return row_col_file
@@ -654,7 +653,6 @@ class AutoRouteHandler:
         dem_spatial_ref = ds.GetSpatialRef()
         dem_sr = osr.SpatialReference(str(dem_spatial_ref)) # load projection
         return int(dem_sr.GetAuthorityCode(None)) # get EPSG code
-
 
     def list_to_sublists(self, alist: List[Any], n: int) -> List[List[Any]]:
         return [alist[x:x+n] for x in range(0, len(alist), n)]
@@ -807,6 +805,8 @@ class AutoRouteHandler:
                 if not self.MANNINGS_TABLE:
                     logging.warning('No mannings table for the Land Use raster!')
                 else:
+                    if not os.path.isabs(self.MANNINGS_TABLE):
+                        self.MANNINGS_TABLE = os.path.abspath(self.MANNINGS_TABLE)
                     mannings_table = self._format_files(self.MANNINGS_TABLE)
                     self._write(f,'LU_Manning_n',mannings_table)
             else:

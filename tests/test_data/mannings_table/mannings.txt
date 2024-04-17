@@ -1,0 +1,24 @@
+LC_ID	Description	Manning_n
+0	No_Input_data	.02
+10	Shrubs	.05
+15	Herbcaceous_vegetation	.05
+20	Cropland	.035
+25	Urban	.1
+30	Bare	.03
+35	Snow_and_Ice	.02
+40	Permanent_water_bodies	.03
+45	Herbaceous wetland	.1
+55.5	Closed_forest_evergreen_needle	.12
+56	Closed_forest_evergreen_broad	.12
+56.5	Closed_forest_deciduous_needle	.12
+57	Closed_forest_deciduous_broad	.12
+57.5	Closed_forest_mixed	.12
+58	Closed_forest_unknown	.12
+60.5	Open_forest_evergreen_needle	.12
+61	Open_forest_evergreen_broad	.12
+61.5	Open_forest_deciduous_needle	.12
+62	Open_forest_deciduous_broad	.12
+62.5	Open_forest_mixed	.12
+63	Open_forest_unknown	.12
+100	Open_Sea	.030
+

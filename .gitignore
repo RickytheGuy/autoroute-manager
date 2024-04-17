@@ -5,3 +5,4 @@
 *This is the*
 .vscode*
 tests\test_data\exes\*
+*.exe*

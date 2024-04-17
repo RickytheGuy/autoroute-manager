@@ -263,6 +263,7 @@ class TestFlowFile(unittest.TestCase):
         self.assertTrue(out_df.equals(val_df), "Dataframes are not equal")
 
 @unittest.skipIf(sys.platform != "win32" and sys.platform != "linux", "Runs only on windows or linux")
+@unittest.skipIf(not os.path.exists(os.path.join("tests","test_data","exes","AutoRoute_w_GDAL.exe")), "AutoRoute exe not found")
 class TestAutoRoute(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -280,7 +281,9 @@ class TestAutoRoute(unittest.TestCase):
                "FLOW_COLUMN": "max",
                "BASE_FLOW_COLUMN": "flow",
               "AUTOROUTE": os.path.join("tests","test_data","exes","AutoRoute_w_GDAL.exe"),
-              "FLOODSPREADER": os.path.join("tests","test_data","exes", "AutoRoute_FloodSpreader.exe") }
+              "FLOODSPREADER": os.path.join("tests","test_data","exes", "AutoRoute_FloodSpreader.exe"),
+               "AUTOROUTE_CONDA_ENV": "autoroute",
+                "MANNINGS_TABLE": os.path.join("tests","test_data","mannings_table","mannings.txt") }
         self.output = os.path.join("test_ar_data","stream_files","test_dem__test_strm","N18W073_FABDEM_V1-2__strm.tif")
         # self.validation = os.path.join("tests","test_data","validation","rasterization","N18W073_FABDEM_V1-2__strm_val.tif")
         
