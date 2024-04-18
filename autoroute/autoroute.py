@@ -54,47 +54,61 @@ class AutoRouteHandler:
         sim_flow_files = []
         flood_files = []
         if self.DEM_FOLDER:
-            dems = {os.path.join(self.DEM_FOLDER,f) for f in os.listdir(self.DEM_FOLDER) if f.lower().endswith((".tif", ".vrt"))}
+            if os.path.isdir(self.DEM_FOLDER):
+                dems = {os.path.join(self.DEM_FOLDER,f) for f in os.listdir(self.DEM_FOLDER) if f.lower().endswith((".tif", ".vrt"))}
+            else:
+                dems = {self.DEM_FOLDER}
         else:
             if self.BUFFER_FILES:
                 dems = {f for f in glob.glob(os.path.join(self.DATA_DIR, 'dems', self.DEM_NAME, "*_buff.*")) if f.lower().endswith((".tif", ".vrt"))}
             elif self.CROP:
                 dems = {f for f in glob.glob(os.path.join(self.DATA_DIR, 'dems', self.DEM_NAME, "*_crop.*")) if f.lower().endswith((".tif", ".vrt"))}
+            else:
+                dems = glob.glob(os.path.join(self.DATA_DIR, 'dems', self.DEM_NAME, "*"))
         if self.EXTENT:
             dems = {dem for dem in dems if self.is_in_extent(dem, self.EXTENT)}
+        if not dems:
+            logging.warning(f"No DEMs found!!")
+            return
         processes = max(min(len(dems), os.cpu_count()), 1)
         mifns = None
         if processes > 0:
             with multiprocessing.Pool(processes=processes) as pool:
                 if self.CROP and self.EXTENT:
+                    logging.info(f"Cropping {processes} DEM(s)...")
                     dems = pool.map(self.crop, dems)
 
                 if self.STREAM_NETWORK_FOLDER:
+                    logging.info(f"Creating stream rasters for {processes} DEM(s)...")
                     strms = pool.map(self.create_strm_file, dems)
 
                 if self.LAND_USE_FOLDER:
+                    logging.info(f"Creating land use rasters for {processes} DEM(s)...")
                     lus = pool.map(self.create_land_use, dems)
 
                 # strms = glob.glob(os.path.join(self.DATA_DIR, 'stream_files', f"{self.DEM_NAME}__{self.STREAM_NAME}","*.tif"))
                 if not self.DEM_FOLDER and self.EXTENT:
                     strms = {strm for strm in strms if self.is_in_extent(strm, self.EXTENT)}
                 if strms and self.SIMULATION_FLOWFILE:
+                    logging.info(f"Creating row col id files for {processes} DEM(s)...")
                     sim_flow_files = pool.map(self.create_row_col_id_file, strms)
 
                 if self.FLOOD_FLOWFILE:
+                    logging.info(f"Creating flood flow files for {processes} DEM(s)...")
                     flood_files = pool.map(self.create_flood_flowfile, strms)
                 
                 pairs = self._zip_files(dems, strms, lus, sim_flow_files, flood_files)
                 if self.AUTOROUTE or self.FLOODSPREADER:
+                    logging.info(f"Creating mifn files for {processes} DEM(s)...")
                     mifns = pool.starmap(self.create_mifn_file, pairs)
 
-        if mifns and (self.AUTOROUTE or self.FLOODSPREADER):
-            processes = min(len(mifns), os.cpu_count())
-            with multiprocessing.Pool(processes=processes) as pool:
                 if self.AUTOROUTE:
-                    results = tqdm.tqdm(pool.imap_unordered(self.run_autoroute, mifns))
-                    for res in results:
-                        print(results)
+                    logging.info(f"Running AutoRoute on {processes} DEM(s)...")
+                    pool.map(self.run_autoroute, mifns)
+
+                if self.FLOODSPREADER:
+                    logging.info(f"Running FloodSpreader on {processes} DEM(s)...")
+                    pool.map(self.run_floodspreader, mifns)
  
     def setup(self, yaml_file) -> None:
         """
@@ -404,7 +418,10 @@ class AutoRouteHandler:
         
         minx, miny, maxx, maxy = self.get_ds_extent(ds)
 
-        filenames = [os.path.join(self.STREAM_NETWORK_FOLDER,f) for f in os.listdir(self.STREAM_NETWORK_FOLDER) if f.endswith(('.shp', '.gpkg', '.parquet', '.geoparquet'))]
+        if os.path.isdir(self.STREAM_NETWORK_FOLDER):
+            filenames = [os.path.join(self.STREAM_NETWORK_FOLDER,f) for f in os.listdir(self.STREAM_NETWORK_FOLDER) if f.endswith(('.shp', '.gpkg', '.parquet', '.geoparquet'))]
+        else:
+            filenames = [self.STREAM_NETWORK_FOLDER]
         if not filenames:
             logging.warning(f"No stream files found in {self.STREAM_NETWORK_FOLDER}")
             return
@@ -486,9 +503,14 @@ class AutoRouteHandler:
             if not self.FLOW_COLUMN:
                 cols = df.columns
             else:
-                if self.FLOW_COLUMN not in df.columns:
-                    raise ValueError(f"The flow field you've entered is not in the file\nflows entered: {self.FLOW_COLUMN}, columns found: {list(df)}")
-                cols = [self.ID_COLUMN, self.FLOW_COLUMN]
+                if isinstance(self.FLOW_COLUMN, str):
+                    if self.FLOW_COLUMN not in df.columns:
+                        raise ValueError(f"The flow field you've entered is not in the file\nflows entered: {self.FLOW_COLUMN}, columns found: {list(df)}")
+                    cols = [self.ID_COLUMN, self.FLOW_COLUMN]
+                elif isinstance(self.FLOW_COLUMN, list):
+                    if not all(f in df.columns for f in self.FLOW_COLUMN):
+                        raise ValueError(f"The flow fields you've entered is not in the file\nflows entered: {self.FLOW_COLUMN}, columns found: {list(df)}")
+                    cols = [self.ID_COLUMN] + self.FLOW_COLUMN
                 if self.BASE_FLOW_COLUMN:
                     if self.BASE_FLOW_COLUMN not in df.columns:
                         raise ValueError(f"The baseflow field you've entered is not in the file\nflows entered: {self.FLOW_COLUMN}, columns found: {list(df)}")
@@ -578,7 +600,11 @@ class AutoRouteHandler:
         y_res = abs(dem_ds.GetGeoTransform()[5])
         dem_ds = None
 
-        filenames = [os.path.join(self.LAND_USE_FOLDER,f) for f in os.listdir(self.LAND_USE_FOLDER) if f.endswith(('.tif'))]
+        if os.path.isdir(self.LAND_USE_FOLDER):
+            filenames = [os.path.join(self.LAND_USE_FOLDER,f) for f in os.listdir(self.LAND_USE_FOLDER) if f.endswith(('.tif'))]
+        else:
+            filenames = [self.LAND_USE_FOLDER]
+
         if not self.check_has_same_projection(filenames):
             logging.error("Some land use files have different projections. Exiting...")
             raise NotImplementedError("Different projections")
@@ -769,7 +795,9 @@ class AutoRouteHandler:
             if self.VDT:
                 vdt = os.path.join(self.VDT, f"{os.path.basename(dem).split('.')[0]}__vdt.txt")
             else:
-                vdt = os.path.join(self.DATA_DIR, 'vdts', f"{self.DEM_NAME}__{self.STREAM_NAME}", f"{os.path.basename(dem).split('.')[0]}__vdt.txt")
+                vdt = os.path.join(self.DATA_DIR, 'vdts', f"{self.DEM_NAME}__{self.STREAM_NAME}")
+                os.makedirs(vdt, exist_ok=True)
+                vdt = os.path.join(vdt, f"{os.path.basename(dem).split('.')[0]}__vdt.txt")
             vdt = self._format_files(vdt)
             self._check_type('VDT', vdt, ['.txt'])
             self._write(f,'Print_VDT_Database',vdt)
@@ -789,9 +817,9 @@ class AutoRouteHandler:
             self._write(f,'Use_Prev_D_4_XS',self.use_prev_d_4_xs)
             self._write(f,'ADJUST_FLOW_BY_FRACTION',self.adjust_flow)
             if self.Str_Limit_Val: self._write(f,'Str_Limit_Val',self.Str_Limit_Val)
-            if not math.isinf(self.UP_Str_Limit_Val): self._write(f,'UP_Str_Limit_Val',self.UP_Str_Limit_Val)
+            if not math.isinf(self.UP_Str_Limit_Val) and self.UP_Str_Limit_Val > 0: self._write(f,'UP_Str_Limit_Val',self.UP_Str_Limit_Val)
             if self.row_start: self._write(f,'Layer_Row_Start',self.row_start)
-            if self.row_end < nrows: self._write(f,'Layer_Row_End',self.row_end)
+            if self.row_end < nrows and self.row_end > 0: self._write(f,'Layer_Row_End',self.row_end)
 
             if self.degree_manip > 0 and self.degree_interval > 0:
                 self._write(f,'Degree_Manip',self.degree_manip)
@@ -970,6 +998,12 @@ class AutoRouteHandler:
         try:
             exe = self._format_files(self.AUTOROUTE.strip())
             mifn = self._format_files(mifn.strip())
+
+            vdt = self.get_item_from_mifn(mifn, key='Print_VDT_Database')
+            if vdt and os.path.exists(vdt) and not self.OVERWRITE:
+                logging.info(f"{vdt} already exists. Skipping...")
+                return
+
             process = subprocess.run(f'conda activate {self.AUTOROUTE_CONDA_ENV} && echo "a" | {exe} {mifn}', # We echo a dummy input in so that AutoRoute can terminate if some input is wrong
                                      stdout=asyncio.subprocess.PIPE,
                                      stderr=asyncio.subprocess.PIPE,
@@ -980,5 +1014,40 @@ class AutoRouteHandler:
         if process.returncode == 0:
             logging.info('Program finished')
             return process.stdout.decode('utf-8')
-        logging.error(f"Error running autoroute: {process.stderr.decode('utf-8')}")
+        logging.error(f"Error running autoroute: {process.stdout.decode('utf-8')}")
         return process.stderr.decode('utf-8')
+
+    def run_floodspreader(self, mifn: str) -> None:
+        try:
+            exe = self._format_files(self.FLOODSPREADER.strip())
+            mifn = self._format_files(mifn.strip())
+
+            # vdt = self.get_item_from_mifn(mifn, key='Print_VDT_Database')
+            # if vdt and os.path.exists(vdt) and not self.OVERWRITE:
+            #     logging.info(f"{vdt} already exists. Skipping...")
+            #     return
+            
+            process = subprocess.run(f'conda activate {self.AUTOROUTE_CONDA_ENV} && echo "a" | {exe} {mifn}', # We echo a dummy input in so that AutoRoute can terminate if some input is wrong
+                                     stdout=asyncio.subprocess.PIPE,
+                                     stderr=asyncio.subprocess.PIPE,
+                                     shell=True,)
+        except Exception as e:
+            logging.error(f"Error running autoroute: {e}")
+
+        if process.returncode == 0:
+            logging.info('Program finished')
+            return process.stdout.decode('utf-8')
+        logging.error(f"Error running autoroute: {process.stdout.decode('utf-8')}")
+        return process.stderr.decode('utf-8')
+    
+    def get_item_from_mifn(self, mifn: str, key: str) -> str:
+        """
+        Given a main input file, extract the vdt file from it
+        """
+        try:
+            df = pd.read_csv(mifn, sep="\t", header=None).T 
+            df = df.rename(columns=df.iloc[0]).iloc[1:]
+            return df[key].values[0]
+        except Exception as e:
+            logging.error(f"Error reading '{key}' from {mifn}: {e}")
+            return ""

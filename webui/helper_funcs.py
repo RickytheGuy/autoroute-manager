@@ -106,7 +106,7 @@ class ManagerFacade():
                     "Low_Spot_Find_Flat_Cutoff":args[24],
                     "vdt":args[66],
                     "num_iterations":args[11],
-                    "Flow_RAPIDFile":args[37],
+                    "flow_params":args[9],
                     "flow_baseflow":args[10],
                     "subtract_baseflow":args[7],
                     "Bathymetry_Alpha":args[35],
@@ -158,8 +158,11 @@ class ManagerFacade():
         """
         Function added so that windows paths that pad with quotation marks can be valid
         """
-        if any(file_path.endswith(s) and file_path.startswith(s) for s in ['"',"'"]):
-            return file_path[1:-1]
+        if not file_path: return ""
+        if any(file_path.startswith(s) for s in ['"',"'"]):
+            file_path = file_path[1:]
+        if any(file_path.endswith(s) for s in ['"',"'"]):
+            file_path = file_path[:-1]
         return file_path
 
     def _write(self,f, Card, Argument = '') -> None:
@@ -246,34 +249,34 @@ class ManagerFacade():
         else:
             extent = (minx, miny, maxx, maxy)
         params = {"OVERWRITE": overwrite,
-                  "DATA_DIR": data_dir,
-                  "DEM_FOLDER": dem,
+                  "DATA_DIR": self._format_files(data_dir),
+                  "DEM_FOLDER": self._format_files(dem),
                   "BUFFER_FILES": buffer,
                   "DEM_NAME": dem_name,
-                  "STREAM_NETWORK_FOLDER": strm_lines,
+                  "STREAM_NETWORK_FOLDER": self._format_files(strm_lines),
                   "STREAM_NAME": strm_name,
                   "STREAM_ID": flow_id,
-                  "SIMULATION_FLOWFILE": base_max_file,
-                  "FLOOD_FLOWFILE":id_flow_file,
+                  "SIMULATION_FLOWFILE": self._format_files(base_max_file),
+                  "FLOOD_FLOWFILE":self._format_files(id_flow_file),
                   "ID_COLUMN": flow_id,
                   "FLOW_COLUMN": flow_params,
                   "BASE_FLOW_COLUMN": flow_baseflow,
                   "EXTENT": extent,
                   "CROP": crop,
-                  "LAND_USE_FOLDER": lu_file,
+                  "LAND_USE_FOLDER": self._format_files(lu_file),
                   "LAND_USE_NAME": lu_name,
-                  "MANNINGS_TABLE": mannings_table,
-                  "DEPTH_MAP": depth_map,
-                  "FLOOD_MAP": flood_map,
-                  "VELOCITY_MAP": velocity_map,
-                  "WSE_MAP": wse_map,
+                  "MANNINGS_TABLE": self._format_files(mannings_table),
+                  "DEPTH_MAP": self._format_files(depth_map),
+                  "FLOOD_MAP": self._format_files(flood_map),
+                  "VELOCITY_MAP": self._format_files(velocity_map),
+                  "WSE_MAP": self._format_files(wse_map),
 
-                  "AUTOROUTE": ar_exe,
-                  "FLOODSPREADER": fs_exe,
+                  "AUTOROUTE": self._format_files(ar_exe),
+                  "FLOODSPREADER": self._format_files(fs_exe),
                   "AUTOROUTE_CONDA_ENV": "autoroute",
 
                   "RAPID_Subtract_BaseFlow": subtract_baseflow,
-                  "VDT": vdt_file,
+                  "VDT": self._format_files(vdt_file),
                   "num_iterations" : num_iterations,
                   "convert_cfs_to_cms": convert_cfs_to_cms,  
                   "x_distance": x_distance,
@@ -296,7 +299,7 @@ class ManagerFacade():
                   "box_size": box_size,
                   "find_flat": find_flat,
                   "low_spot_find_flat_cutoff": low_spot_find_flat_cutoff,
-                  "ar_bathy": ar_bathy,
+                  "ar_bathy": self._format_files(ar_bathy),
                   "bathy_alpha": bathy_alpha,
                   "bathy_method": bathy_method,
                   "bathy_x_max_depth": bathy_x_max_depth,
@@ -317,6 +320,7 @@ class ManagerFacade():
         }
         self.manager.setup(params)
         self.manager.run()
+        gr.Info("DONE!")
         
     def _prepare_exe(self,exe: str) -> str:
         if SYSTEM == "Windows":
