@@ -832,6 +832,7 @@ class AutoRouteHandler:
                 bathy_file = os.path.join(bathy_file, f"{os.path.basename(dem).split('.')[0]}__ar_bathy.txt")
                 self._write(f,'BATHY_Out_File',bathy_file)
                 self._write(f,'Bathymetry_Alpha',self.bathy_alpha)
+                self._write(f,'Bathymetry')
 
                 if self.bathy_method == 'Parabolic':
                     self._write(f,'Bathymetry_Method',0)

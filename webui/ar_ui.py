@@ -8,6 +8,7 @@ import gradio as gr
 import sys
 import signal
 import logging
+from typing import List
 
 import helper_funcs as hp
 manager = hp.ManagerFacade()
@@ -21,6 +22,7 @@ if __name__ == '__main__':
 
 with gr.Blocks(title='AutoRoute WebUI') as demo:
     gr.Markdown('# AutoRoute WebUI')
+        
     with gr.Tabs():
         with gr.TabItem('Run AutoRoute'):
             gr.Markdown('## Inputs - Required')
@@ -125,11 +127,6 @@ with gr.Blocks(title='AutoRoute WebUI') as demo:
                     map_output = gr.Plot(label="Extent Preview")
                     with gr.Row():
                         with gr.Column():
-                            data_dir = gr.Textbox(value=manager.default("data_dir"),
-                                                  label='Data Directory',
-                                                info='Directory where AutoRoute will store its data',
-                                                interactive=True)
-                      
                             with gr.Row():
                                 gr.Markdown("Specify an extent if needed")
                                 minx = gr.Number(value=manager.default("minx"),
@@ -143,6 +140,23 @@ with gr.Blocks(title='AutoRoute WebUI') as demo:
 
                             map_button = gr.Button("Preview Extent on Map")
                             map_button.click(fn=manager.make_map, inputs=[minx, miny, maxx, maxy], outputs=[map_output])
+
+                            data_dir = gr.Textbox(value=manager.default("data_dir"),
+                                                  label='Data Directory',
+                                                info='Directory where AutoRoute will store its data',
+                                                interactive=True)
+                            
+                            ar_exe = gr.Textbox(value=manager.default("ar_exe"),
+                                                placeholder='/User/Desktop/AutoRoute.exe',
+                                                label="AutoRoute Executable",
+                                                info=manager.doc('ar_exe')
+                            )
+
+                            fs_exe = gr.Textbox(value=manager.default("fs_exe"),
+                                                placeholder='/User/Desktop/FloodSpreader.exe',
+                                                label="FloodSpreader Executable",
+                                                info=manager.doc('fs_exe')
+                            )
 
                         with gr.Column():
                             depth_map = gr.Textbox(value=manager.default("out_depth"),
@@ -307,7 +321,7 @@ with gr.Blocks(title='AutoRoute WebUI') as demo:
                         with gr.Accordion('Bathymetry', open=False):
                             with gr.Row():
                                 with gr.Column():
-                                    ar_bathy = gr.Textbox(value=manager.default("BATHY_Out_File"),
+                                    ar_bathy_out_file = gr.Textbox(value=manager.default("BATHY_Out_File"),
                                                 placeholder='/User/Desktop/bathy.tif',
                                                 label="Output Bathymetry File",
                                                 info=manager.doc('BATHY_Out_File')
@@ -328,7 +342,9 @@ with gr.Blocks(title='AutoRoute WebUI') as demo:
                                                             value=manager.default("bathy_method"),
                                                             label='Bathymetry Method',
                                                             info=manager.doc('bathy_method'),
-                                                            multiselect=False,interactive=True)
+                                                            multiselect=False,
+                                                            interactive=True,
+                                                            allow_custom_value=True)
                                     bathy_x_max_depth = gr.Slider(0,1,value=manager.default("bathy_x_max_depth"),
                                                                 label='X Max Depth',
                                                                 info=manager.doc('bathy_x_max_depth'), 
@@ -405,7 +421,7 @@ with gr.Blocks(title='AutoRoute WebUI') as demo:
                                 )
                                 with gr.Column():
                                     fs_bathy_smooth_method = gr.Dropdown(['None','Linear Interpolation', 'Inverse-Distance Weighted'],
-                                                                         value=manager.default("bathy_method"),
+                                                                         value=manager.default("fs_bathy_smooth_method"),
                                                                         label='Bathymetry Smoothing',
                                                                         interactive=True) 
                                     bathy_twd_factor = gr.Number(value=manager.default("bathy_twd_factor"),
@@ -415,23 +431,16 @@ with gr.Blocks(title='AutoRoute WebUI') as demo:
                                     fs_bathy_smooth_method.change(lambda x: gr.Number(visible=True) if x[0] == 'I' else gr.Number(visible=False),
                                                                   fs_bathy_smooth_method, bathy_twd_factor)
        
-            run_button.click(fn=manager._run,
-                                             inputs=[dem,dem_name, strm_lines, strm_name, lu_file, lu_name, base_max_file, subtract_baseflow, flow_id, flow_params, flow_baseflow, num_iterations,
+            inputs = [dem,dem_name, strm_lines, strm_name, lu_file, lu_name, base_max_file, subtract_baseflow, flow_id, flow_params, flow_baseflow, num_iterations,
                                                     meta_file, convert_cfs_to_cms, x_distance, q_limit, LU_Manning_n, direction_distance, slope_distance, low_spot_distance, low_spot_is_meters,
                                                     low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, degree_manip, degree_interval, Str_Limit_Val, UP_Str_Limit_Val, row_start, row_end, use_prev_d_4_xs,
-                                                    weight_angles, man_n, adjust_flow, bathy_alpha, ar_bathy, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
+                                                    weight_angles, man_n, adjust_flow, bathy_alpha, ar_bathy_out_file, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
                                                     specify_depth, twd_factor, only_streams, use_ar_top_widths, flood_local, depth_map, flood_map, velocity_map, wse_map, fs_bathy_file, da_flow_param,
                                                     bathy_method,bathy_x_max_depth, bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,
-                                                    data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file],
-                                                     outputs=[]
+                                                    data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file, ar_exe, fs_exe]
+            run_button.click(fn=manager._run, inputs=inputs, outputs=[]
                                              )
-            save_button.click(fn=manager.save, inputs=[dem,dem_name, strm_lines, strm_name, lu_file, lu_name, base_max_file, subtract_baseflow, flow_id, flow_params, flow_baseflow, num_iterations,
-                                                    meta_file, convert_cfs_to_cms, x_distance, q_limit, LU_Manning_n, direction_distance, slope_distance, low_spot_distance, low_spot_is_meters,
-                                                    low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, degree_manip, degree_interval, Str_Limit_Val, UP_Str_Limit_Val, row_start, row_end, use_prev_d_4_xs,
-                                                    weight_angles, man_n, adjust_flow, bathy_alpha, ar_bathy, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
-                                                    specify_depth, twd_factor, only_streams, use_ar_top_widths, flood_local, depth_map, flood_map, velocity_map, wse_map, fs_bathy_file, da_flow_param,
-                                                    bathy_method,bathy_x_max_depth, bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,
-                                                    data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file], outputs=[])
+            save_button.click(fn=manager.save, inputs=inputs, outputs=[])
 
         with gr.TabItem('File Preprocessing'):
             pass
@@ -444,7 +453,6 @@ def shutdown(signum, server):
     print()
     print('Shutting down...')
     demo.close()
-    manager.save()
     exit()
 
 signal.signal(signal.SIGINT, shutdown) # Control 

@@ -31,15 +31,15 @@ SYSTEM = platform.system()
 class ManagerFacade():
     def init(self) -> None:
         self.manager = AutoRouteHandler(None)
-        docs_file = 'defaults_and_docs.json'
+        self.docs_file = 'defaults_and_docs.json'
         docs = None
         data = None
-        if not os.path.exists(docs_file):
-            docs_file = os.path.join(os.path.dirname(__file__), 'defaults_and_docs.json')
-        if not os.path.exists(docs_file):
+        if not os.path.exists(self.docs_file):
+            self.docs_file = os.path.join(os.path.dirname(__file__), 'defaults_and_docs.json')
+        if not os.path.exists(self.docs_file):
             gr.Warning('Could not find the defaults_and_docs.json file')
         else:
-            with open(docs_file, 'r', encoding='utf-8') as f:
+            with open(self.docs_file, 'r', encoding='utf-8') as f:
                 d = json.loads(f.read())[0]
                 docs: Dict[str,str] = d['docs']
                 data: Dict[str,str] = d['data']
@@ -58,9 +58,100 @@ class ManagerFacade():
     def save(self, *args) -> None:
         """
         Save the modified documentation and defaults
+
+        order of args: 
+        0. dem, dem_name, strm_lines, strm_name, lu_file, 
+        5. lu_name, base_max_file, subtract_baseflow, flow_id, flow_params, 
+        10. flow_baseflow, num_iterations,meta_file, convert_cfs_to_cms, x_distance, 
+        15. q_limit, LU_Manning_n, direction_distance, slope_distance, low_spot_distance, 
+        20. low_spot_is_meters,low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, 
+        25. degree_manip, degree_interval, Str_Limit_Val, UP_Str_Limit_Val, row_start, 
+        30. row_end, use_prev_d_4_xs,weight_angles, man_n, adjust_flow, 
+        35. bathy_alpha, ar_bathy_out_file, id_flow_file, omit_outliers, wse_search_dist, 
+        40. wse_threshold, wse_remove_three,specify_depth, twd_factor, only_streams, 
+        45. use_ar_top_widths, flood_local, depth_map, flood_map, velocity_map, 
+        50. wse_map, fs_bathy_file, da_flow_param,bathy_method,bathy_x_max_depth, 
+        55. bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,data_dir, minx, 
+        60. miny, maxx, maxy, overwrite, buffer, 
+        65. crop, vdt_file,  ar_exe, fs_exe
         """
-        for arg in args:
-            print(arg)
+        if len(args) < 68: return
+        to_write = [
+            {
+                "docs": self.docs,
+                "data": {
+                    "DEM":args[0],
+                    "DEM_NAME":args[1],
+                    "strm_lines":args[2],
+                    "strm_name":args[3],
+                    "flow_id":args[8],
+                    "ar_exe":args[67],
+                    "stream_file":args[68],
+                    "x_distance":args[14],
+                    "q_limit":args[15],
+                    "use_prev_d_4_xs":args[31],
+                    "man_n":args[33],
+                    "lu_file":args[4],
+                    "lu_name":args[5],
+                    "LU_Manning_n":args[16],
+                    "base_max_file":args[6],
+                    "Gen_Dir_Dist":args[17],
+                    "Gen_Slope_Dist":args[18],
+                    "Weight_Angles":args[32],
+                    "Str_Limit_Val":args[27],
+                    "UP_Str_Limit_Val":args[28],
+                    "degree_manip":args[25],
+                    "degree_interval":args[26],
+                    "Low_Spot_Range":args[19],
+                    "Low_Spot_Find_Flat_Cutoff":args[24],
+                    "vdt":args[66],
+                    "num_iterations":args[11],
+                    "Flow_RAPIDFile":args[37],
+                    "flow_baseflow":args[10],
+                    "subtract_baseflow":args[7],
+                    "Bathymetry_Alpha":args[35],
+                    "Layer_Row_Start":args[29],
+                    "Layer_Row_End":args[30],
+                    "ADJUST_FLOW_BY_FRACTION":args[34],
+                    "BATHY_Out_File":args[36],
+                    "Meta_File":args[12],
+                    "Comid_Flow_File":args[37],
+                    "fs_bathy_file":args[51],
+                    "omit_outliers":args[38],
+                    "FloodSpreader_SpecifyDepth":args[42],
+                    "twd_factor":args[43],
+                    "only_streams":args[44],
+                    "use_ar_top_widths":args[45],
+                    "FloodLocalOnly":args[46],
+                    "out_depth":args[47],
+                    "out_flood":args[48],
+                    "out_velocity":args[49],
+                    "out_wse":args[50],
+                    "RAPID_DA_or_Flow_Param":args[52],
+                    "bathy_method":args[53],
+                    "bathy_x_max_depth":args[54],
+                    "bathy_y_shallow":args[55],
+                    "overwrite":args[63],
+                    "buffer":args[64],
+                    "crop":args[65],
+                    "data_dir":args[58],
+                    "minx":args[59],
+                    "maxx":args[60],
+                    "miny":args[61],
+                    "maxy":args[62],
+                    "convert_cfs_to_cms":args[13],
+                    "low_spot_is_meters":args[20],
+                    "low_spot_use_box":args[21],
+                    "box_size":args[22],
+                    "find_flat":args[23],
+                    "bathy_twd_factor":args[57],
+                    "fs_bathy_smooth_method":args[56]
+                }
+            }
+        ]
+
+        with open(self.docs_file, 'w', encoding='utf-8') as f:
+            f.write(json.dumps(to_write, indent=4))
 
     #@staticmethod
     def _format_files(self,file_path: str) -> str:
@@ -146,7 +237,7 @@ class ManagerFacade():
                                                     weight_angles, man_n, adjust_flow, bathy_alpha, ar_bathy, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
                                                     specify_depth, twd_factor, only_streams, use_ar_top_widths, flood_local, depth_map, flood_map, velocity_map, wse_map, fs_bathy_file, da_flow_param,
                                                     bathy_method,bathy_x_max_depth, bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,
-                                                    data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file) -> None:
+                                                    data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file,  ar_exe, fs_exe) -> None:
         """
         Write the main input file
         """
@@ -177,8 +268,8 @@ class ManagerFacade():
                   "VELOCITY_MAP": velocity_map,
                   "WSE_MAP": wse_map,
 
-                  "AUTOROUTE": os.path.join('tests','test_data','exes','AutoRoute_w_GDAL.exe'),
-                  "FLOODSPREADER": os.path.join('tests','test_data','exes','AutoRoute_FloodSpreader.exe'),
+                  "AUTOROUTE": ar_exe,
+                  "FLOODSPREADER": fs_exe,
                   "AUTOROUTE_CONDA_ENV": "autoroute",
 
                   "RAPID_Subtract_BaseFlow": subtract_baseflow,
