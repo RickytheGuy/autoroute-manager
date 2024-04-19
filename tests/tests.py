@@ -16,6 +16,9 @@ from autoroute.autoroute import AutoRouteHandler
 #                     stream=sys.stdout,
 #                     format='%(asctime)s - %(levelname)s - %(message)s')
 
+AUTOROUTE_EXE = os.path.join("tests","test_data","exes","AutoRoute_w_GDAL.exe")
+FLOODSPREADER_EXE = os.path.join("tests","test_data","exes","AutoRoute_FloodSpreader.exe")
+
 run_extent=True
 @unittest.skip
 class TestStreamRasterization(unittest.TestCase):
@@ -262,8 +265,9 @@ class TestFlowFile(unittest.TestCase):
         val_df = pd.read_csv(self.validation)
         self.assertTrue(out_df.equals(val_df), "Dataframes are not equal")
 
+run_floodspreader = True
 @unittest.skipIf(sys.platform != "win32" and sys.platform != "linux", "Runs only on windows or linux")
-@unittest.skipIf(not os.path.exists(os.path.join("tests","test_data","exes","AutoRoute_w_GDAL.exe")), "AutoRoute exe not found")
+@unittest.skipIf(not os.path.exists(AUTOROUTE_EXE), "AutoRoute exe not found")
 class TestAutoRoute(unittest.TestCase):
     def setUp(self) -> None:
         self.params = {"OVERWRITE": True,
@@ -280,8 +284,7 @@ class TestAutoRoute(unittest.TestCase):
                "SIMULATION_ID_COLUMN": "LINKNO",
                "SIMULATION_FLOW_COLUMN": "max",
                "BASE_FLOW_COLUMN": "flow",
-              "AUTOROUTE": os.path.join("tests","test_data","exes","AutoRoute_w_GDAL.exe"),
-              "FLOODSPREADER": os.path.join("tests","test_data","exes", "AutoRoute_FloodSpreader.exe"),
+              "AUTOROUTE": AUTOROUTE_EXE,
                "AUTOROUTE_CONDA_ENV": "autoroute",
                 "MANNINGS_TABLE": os.path.join("tests","test_data","mannings_table","mannings.txt") }
         self.output = os.path.join("test_ar_data","vdts","test_dem__test_strm","N18W073_FABDEM_V1-2__vdt.txt")
@@ -291,6 +294,8 @@ class TestAutoRoute(unittest.TestCase):
         if self.output and os.path.exists(self.output): os.remove(self.output) 
 
     def test_AutoRoute(self):
+        global run_floodspreader
+        run_floodspreader = False
         AutoRouteHandler(self.params).run()
         2
         self.assertTrue(os.path.exists(self.output), f"File does not exist: {self.output}")
@@ -299,6 +304,49 @@ class TestAutoRoute(unittest.TestCase):
         with open(self.validation) as f:
             val = f.read()
         self.assertEqual(out, val, "VDT files are not equal")
+        run_floodspreader = True
+
+@unittest.skipIf(sys.platform != "win32" and sys.platform != "linux", "Runs only on windows or linux")
+@unittest.skipIf(not os.path.exists(os.path.join(AUTOROUTE_EXE)) or not os.path.exists(FLOODSPREADER_EXE), "AutoRoute and/or FloodSpreader not found")
+@unittest.skipIf(not run_floodspreader, "Autoroute failed, not running FloodSpreader")
+class TestFloodSpreader(unittest.TestCase):
+    def setUp(self) -> None:
+        self.params = {"OVERWRITE": True,
+              "DATA_DIR": "test_ar_data",
+              "DEM_FOLDER": os.path.join("tests","test_data","DEMs","single_4326"),
+              "BUFFER_FILES": False, 
+              "DEM_NAME": "test_dem", 
+              "STREAM_NETWORK_FOLDER": os.path.join("tests","test_data","streamlines","single_parquet_4326"), 
+              "STREAM_NAME": "test_strm", 
+              "STREAM_ID": "LINKNO",
+              "LAND_USE_FOLDER": os.path.join("tests","test_data","LUs","single_4326"),
+              "LAND_USE_NAME": "test_land",
+              "SIMULATION_FLOWFILE":  os.path.join("tests","test_data","flow_files","v2_flows.csv",),
+              "SIMULATION_ID_COLUMN": "LINKNO",
+              "SIMULATION_FLOW_COLUMN": "max",
+              "BASE_FLOW_COLUMN": "flow",
+              "FLOOD_FLOWFILE":  os.path.join("tests","test_data","flow_files","v2_flowfile.csv",),
+              "AUTOROUTE": AUTOROUTE_EXE,
+              "FLOODSPREADER": FLOODSPREADER_EXE,
+              "AUTOROUTE_CONDA_ENV": "autoroute",
+              "MANNINGS_TABLE": os.path.join("tests","test_data","mannings_table","mannings.txt"),
+               "FLOOD_MAP":os.path.join("test_ar_data") }
+        self.output = os.path.join("test_ar_data","N18W073_FABDEM_V1-2__flood.tif")
+        self.validation = os.path.join("tests","test_data","validation","maps","simple_flood.tif")
+        
+    def tearDown(self) -> None:
+        if self.output and os.path.exists(self.output): os.remove(self.output) 
+
+    def test_FloodSpreader(self):
+        AutoRouteHandler(self.params).run()
+        
+        out_ds = gdal.Open(self.output)
+        self.assertIsNotNone(out_ds, "Problem opening file")
+        val_ds = gdal.Open(self.validation)
+        self.assertTrue(np.array_equal(out_ds.ReadAsArray(), val_ds.ReadAsArray()), "Arrays are not equal")
+        self.assertTrue(np.isclose((np.array(out_ds.GetGeoTransform()) - np.array(val_ds.GetGeoTransform())).max(), 0), "GeoTransform is not equal")
+        self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
+
 
 if __name__ == '__main__':
     unittest.main()
