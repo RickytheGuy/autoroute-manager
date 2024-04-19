@@ -55,13 +55,13 @@
             "bathy_y_shallow": "The shallow portion of the bathymetric profile is calculated as the maximum depth times the value associated with Bathymetry_YShallow (see figure below). Applies to left bank quadratic, right bank quadratic, and double quadratic bathymetric profiles."
         },
         "data": {
-            "DEM": "\"C:\\Users\\lrr43\\Desktop\\Lab\\MichiganTest\\DEM\\Michigan_DEM.tif\"",
+            "DEM": "C:\\Users\\lrr43\\Desktop\\Lab\\MichiganTest\\DEM",
             "DEM_NAME": "michigan",
             "strm_lines": "\"C:\\Users\\lrr43\\Desktop\\Lab\\MichiganTest\\StreamlineShapefile\\Michigan_DONE.shp\"",
             "strm_name": "michigan",
             "flow_id": "COMID",
             "ar_exe": "C:\\Users\\lrr43\\autoroute_manager\\tests\\test_data\\exes\\AutoRoute_w_GDAL.exe",
-            "stream_file": "",
+            "fs_exe": "C:\\Users\\lrr43\\autoroute_manager\\tests\\test_data\\exes\\AutoRoute_FloodSpreader.exe",
             "x_distance": 1000,
             "q_limit": 1.1,
             "use_prev_d_4_xs": 1,
@@ -70,18 +70,18 @@
             "lu_name": "michigan",
             "LU_Manning_n": "\"C:\\Users\\lrr43\\Desktop\\Lab\\MichiganTest\\LandCover\\AR_Manning_n.txt\"",
             "base_max_file": "\"C:\\Users\\lrr43\\Desktop\\Lab\\MichiganTest\\FlowFile\\Michigan_m.csv\"",
-            "Gen_Dir_Dist": 1,
-            "Gen_Slope_Dist": 1,
+            "Gen_Dir_Dist": 5,
+            "Gen_Slope_Dist": 5,
             "Weight_Angles": 1,
             "Str_Limit_Val": 0,
             "UP_Str_Limit_Val": -1,
-            "degree_manip": 0,
-            "degree_interval": 0,
+            "degree_manip": 6,
+            "degree_interval": 1.5,
             "Low_Spot_Range": 1,
             "Low_Spot_Find_Flat_Cutoff": 0,
             "vdt": "",
             "num_iterations": 15,
-            "flow_params": [
+            "flow_params_ar": [
                 "max"
             ],
             "flow_baseflow": "",
@@ -92,7 +92,7 @@
             "ADJUST_FLOW_BY_FRACTION": 1,
             "BATHY_Out_File": "",
             "Meta_File": "",
-            "Comid_Flow_File": "",
+            "Comid_Flow_File": "\"C:\\Users\\lrr43\\Desktop\\Lab\\MichiganTest\\FlowFile\\Michigan_DEM_Flow_COMID_Q.txt\"",
             "fs_bathy_file": "",
             "omit_outliers": "Use AutoRoute Depths",
             "FloodSpreader_SpecifyDepth": 0,
@@ -101,8 +101,8 @@
             "use_ar_top_widths": true,
             "FloodLocalOnly": true,
             "out_depth": "",
-            "out_flood": "C:\\Users\\lrr43\\Desktop\\Lab\\MichiganTest\\test.tif",
-            "out_velocity": "",
+            "out_flood": "C:\\Users\\lrr43\\Desktop\\Lab\\MichiganTest",
+            "out_velocity": "C:\\Users\\lrr43\\Desktop\\Lab\\MichiganTest",
             "out_wse": "",
             "RAPID_DA_or_Flow_Param": "",
             "bathy_method": "Parabolic",
@@ -120,9 +120,12 @@
             "low_spot_is_meters": false,
             "low_spot_use_box": false,
             "box_size": 1,
-            "find_flat": false,
+            "find_flat": true,
             "bathy_twd_factor": 0.002,
-            "fs_bathy_smooth_method": []
+            "fs_bathy_smooth_method": [
+                "None"
+            ],
+            "clean_outputs": true
         }
     }
 ]

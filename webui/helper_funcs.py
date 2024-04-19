@@ -73,9 +73,9 @@ class ManagerFacade():
         50. wse_map, fs_bathy_file, da_flow_param,bathy_method,bathy_x_max_depth, 
         55. bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,data_dir, minx, 
         60. miny, maxx, maxy, overwrite, buffer, 
-        65. crop, vdt_file,  ar_exe, fs_exe
+        65. crop, vdt_file,  ar_exe, fs_exe, clean_outputs
         """
-        if len(args) < 68: return
+        if len(args) < 69: return
         to_write = [
             {
                 "docs": self.docs,
@@ -86,7 +86,7 @@ class ManagerFacade():
                     "strm_name":args[3],
                     "flow_id":args[8],
                     "ar_exe":args[67],
-                    "stream_file":args[68],
+                    "fs_exe":args[68],
                     "x_distance":args[14],
                     "q_limit":args[15],
                     "use_prev_d_4_xs":args[31],
@@ -106,7 +106,7 @@ class ManagerFacade():
                     "Low_Spot_Find_Flat_Cutoff":args[24],
                     "vdt":args[66],
                     "num_iterations":args[11],
-                    "flow_params":args[9],
+                    "flow_params_ar":args[9],
                     "flow_baseflow":args[10],
                     "subtract_baseflow":args[7],
                     "Bathymetry_Alpha":args[35],
@@ -145,7 +145,8 @@ class ManagerFacade():
                     "box_size":args[22],
                     "find_flat":args[23],
                     "bathy_twd_factor":args[57],
-                    "fs_bathy_smooth_method":args[56]
+                    "fs_bathy_smooth_method":args[56],
+                    "clean_outputs":args[69],
                 }
             }
         ]
@@ -234,13 +235,13 @@ class ManagerFacade():
         else:
             return gr.Markdown(visible=False), gr.DataFrame(visible=False), gr.Textbox(visible=False)
 
-    async def _run(self,dem, dem_name, strm_lines, strm_name, lu_file, lu_name, base_max_file, subtract_baseflow, flow_id, flow_params, flow_baseflow, num_iterations,
+    async def _run(self,dem, dem_name, strm_lines, strm_name, lu_file, lu_name, base_max_file, subtract_baseflow, flow_id, flow_params_ar, flow_baseflow, num_iterations,
                                                     meta_file, convert_cfs_to_cms, x_distance, q_limit, mannings_table, direction_distance, slope_distance, low_spot_distance, low_spot_is_meters,
                                                     low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, degree_manip, degree_interval, Str_Limit_Val, UP_Str_Limit_Val, row_start, row_end, use_prev_d_4_xs,
                                                     weight_angles, man_n, adjust_flow, bathy_alpha, ar_bathy, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
                                                     specify_depth, twd_factor, only_streams, use_ar_top_widths, flood_local, depth_map, flood_map, velocity_map, wse_map, fs_bathy_file, da_flow_param,
                                                     bathy_method,bathy_x_max_depth, bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,
-                                                    data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file,  ar_exe, fs_exe) -> None:
+                                                    data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file,  ar_exe, fs_exe, clean_outputs) -> None:
         """
         Write the main input file
         """
@@ -258,8 +259,8 @@ class ManagerFacade():
                   "STREAM_ID": flow_id,
                   "SIMULATION_FLOWFILE": self._format_files(base_max_file),
                   "FLOOD_FLOWFILE":self._format_files(id_flow_file),
-                  "ID_COLUMN": flow_id,
-                  "FLOW_COLUMN": flow_params,
+                  "SIMULATION_ID_COLUMN": flow_id,
+                  "SIMULATION_FLOW_COLUMN": flow_params_ar,
                   "BASE_FLOW_COLUMN": flow_baseflow,
                   "EXTENT": extent,
                   "CROP": crop,
@@ -270,6 +271,7 @@ class ManagerFacade():
                   "FLOOD_MAP": self._format_files(flood_map),
                   "VELOCITY_MAP": self._format_files(velocity_map),
                   "WSE_MAP": self._format_files(wse_map),
+                  "CLEAN_OUTPUTS": clean_outputs,
 
                   "AUTOROUTE": self._format_files(ar_exe),
                   "FLOODSPREADER": self._format_files(fs_exe),

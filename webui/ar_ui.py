@@ -8,7 +8,6 @@ import gradio as gr
 import sys
 import signal
 import logging
-from typing import List
 
 import helper_funcs as hp
 manager = hp.ManagerFacade()
@@ -44,7 +43,7 @@ if __name__ == '__main__':
                         with gr.Row():
                             dem = gr.Textbox(value=manager.default('DEM'),
                                             placeholder='/User/Desktop/dem.tif',
-                                            label="Digital Elevation Model (DEM)",
+                                            label="Digital Elevation Model (DEM) Folder or File",
                                             #info=manager.default(\w+),
                                             )
                             dem_name = gr.Textbox(value=manager.default('DEM_NAME'),
@@ -55,7 +54,7 @@ if __name__ == '__main__':
                         with gr.Row():
                             strm_lines = gr.Textbox(value=manager.default("strm_lines"), 
                                                     placeholder='/User/Desktop/dem.tif',
-                                                    label="Stream Lines",
+                                                    label="Stream Lines Folder or File",
                                                     #info=manager.default('DEM'),
                                                     )
                             strm_name = gr.Textbox(value=manager.default("strm_name"), 
@@ -74,7 +73,7 @@ if __name__ == '__main__':
                         with gr.Row():
                             lu_file = gr.Textbox(value=manager.default("lu_file"), 
                                                 placeholder='/User/Desktop/lu.tif',
-                                                label="Land Raster(s)",
+                                                label="Land Raster Folder or File",
                                                 #info=manager.default('DEM'),
                                                 )
                             lu_name = gr.Textbox(value=manager.default("lu_name"),
@@ -100,7 +99,7 @@ if __name__ == '__main__':
                                             #info=manager.default('Comid_Flow_File')
                                 )
                             with gr.Row():
-                                flow_params = gr.Dropdown(value=manager.default("flow_params"),
+                                flow_params_ar = gr.Dropdown(value=manager.default("flow_params_ar"),
                                                         label='Flow Columns',
                                                         #info='Specifies the flow rates that AutoRoute uses. Leave blank to use all columns besides the first one.',
                                                         allow_custom_value=True,
@@ -129,10 +128,14 @@ if __name__ == '__main__':
                                                 label='Crop',
                                                     info='Crop output to extent?',
                                                     interactive=True)
+                                clean_outputs = gr.Checkbox(value=manager.default("clean_outputs"),
+                                                    label='Clean Outputs',
+                                                    #info='Clean outputs?',
+                                                    interactive=True)
                                 
                             vdt_file = gr.Textbox(value=manager.default("vdt"),
-                                        placeholder='/User/Desktop/vdt.txt',
-                                        label="VDT File",
+                                        placeholder='/User/Desktop/VDT/',
+                                        label="VDT Folder",
                                         info=manager.doc('vdt')
                             )
                         
@@ -173,32 +176,29 @@ if __name__ == '__main__':
 
                             with gr.Column():
                                 depth_map = gr.Textbox(value=manager.default("out_depth"),
-                                    placeholder='/User/Desktop/depth.tif',
-                                    label="Output Depth Map",
+                                    placeholder='/User/Desktop/Depth/',
+                                    label="Output Depth Map Folder",
                                     #info=manager.doc('out_depth')
                                 )
                                 flood_map = gr.Textbox(value=manager.default("out_flood"),
-                                    placeholder='/User/Desktop/flood.tif',
-                                    label="Output Flood Map",
+                                    placeholder='/User/Desktop/flood/',
+                                    label="Output Flood Map Folder",
                                     #info=manager.doc('out_flood')
                                 )
                                 velocity_map = gr.Textbox(value=manager.default("out_velocity"),
-                                    placeholder='/User/Desktop/velocity.tif',
-                                    label="Output Velocity Map",
+                                    placeholder='/User/Desktop/velocity',
+                                    label="Output Velocity Map Folder",
                                     #info=manager.doc('out_velocity')
                                 )
                                 wse_map = gr.Textbox(value=manager.default("out_wse"),
-                                    placeholder='/User/Desktop/wse.tif',
-                                    label="Output WSE Map",
+                                    placeholder='/User/Desktop/wse',
+                                    label="Output WSE Map Folder",
                                     #info=manager.doc('out_wse')
                                 )
 
                                 run_button = gr.Button("Run Model", variant='primary')
                                 save_button = gr.Button("Save Parameters")
-                                
-                        
-                    
-                        
+                      
                 gr.Markdown('## Inputs - Optional')  
                 with gr.Row():
                     with gr.Column():
@@ -369,7 +369,7 @@ if __name__ == '__main__':
                                         
                                         bathy_method.change(manager.bathy_changes, bathy_method, [bathy_x_max_depth, bathy_y_shallow])
                                 
-                                base_max_file.change(manager.update_flow_params, base_max_file, [flow_id,flow_params, flow_baseflow, da_flow_param])
+                                base_max_file.change(manager.update_flow_params, base_max_file, [flow_id,flow_params_ar, flow_baseflow, da_flow_param])
 
                     with gr.Column():
                         with gr.Accordion("FloodSpreader Parameters", open=False):
@@ -444,13 +444,13 @@ if __name__ == '__main__':
                                         fs_bathy_smooth_method.change(lambda x: gr.Number(visible=True) if x[0] == 'I' else gr.Number(visible=False),
                                                                     fs_bathy_smooth_method, bathy_twd_factor)
         
-                inputs = [dem,dem_name, strm_lines, strm_name, lu_file, lu_name, base_max_file, subtract_baseflow, flow_id, flow_params, flow_baseflow, num_iterations,
+                inputs = [dem,dem_name, strm_lines, strm_name, lu_file, lu_name, base_max_file, subtract_baseflow, flow_id, flow_params_ar, flow_baseflow, num_iterations,
                                                         meta_file, convert_cfs_to_cms, x_distance, q_limit, LU_Manning_n, direction_distance, slope_distance, low_spot_distance, low_spot_is_meters,
                                                         low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, degree_manip, degree_interval, Str_Limit_Val, UP_Str_Limit_Val, row_start, row_end, use_prev_d_4_xs,
                                                         weight_angles, man_n, adjust_flow, bathy_alpha, ar_bathy_out_file, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
                                                         specify_depth, twd_factor, only_streams, use_ar_top_widths, flood_local, depth_map, flood_map, velocity_map, wse_map, fs_bathy_file, da_flow_param,
                                                         bathy_method,bathy_x_max_depth, bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,
-                                                        data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file, ar_exe, fs_exe]
+                                                        data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file, ar_exe, fs_exe, clean_outputs]
                 try:
                     run_button.click(fn=manager._run, inputs=inputs, outputs=[])
                 except Exception as e:

@@ -53,11 +53,15 @@ class AutoRouteHandler:
         lus = []
         sim_flow_files = []
         flood_files = []
+        self.test_ok()
         if self.DEM_FOLDER:
             if os.path.isdir(self.DEM_FOLDER):
                 dems = {os.path.join(self.DEM_FOLDER,f) for f in os.listdir(self.DEM_FOLDER) if f.lower().endswith((".tif", ".vrt"))}
-            else:
+            elif os.path.isfile(self.DEM_FOLDER):
                 dems = {self.DEM_FOLDER}
+            else:
+                logging.error(f"DEM folder {self.DEM_FOLDER} does not exist. Exiting...")
+                return
         else:
             if self.BUFFER_FILES:
                 dems = {f for f in glob.glob(os.path.join(self.DATA_DIR, 'dems', self.DEM_NAME, "*_buff.*")) if f.lower().endswith((".tif", ".vrt"))}
@@ -107,8 +111,17 @@ class AutoRouteHandler:
                     pool.map(self.run_autoroute, mifns)
 
                 if self.FLOODSPREADER:
-                    logging.info(f"Running FloodSpreader on {processes} DEM(s)...")
-                    pool.map(self.run_floodspreader, mifns)
+                    if not self.FLOOD_FLOWFILE:
+                        logging.warning("FloodSpreader requires a flood flow file. Will not run...")
+                    else:
+                        logging.info(f"Running FloodSpreader on {processes} DEM(s)...")
+                        pool.map(self.run_floodspreader, mifns)
+
+                if self.CLEAN_OUTPUTS:
+                    logging.info(f"Optimizing outputs for {processes} DEM(s)...")
+                    pool.map(self.optimize_outputs, mifns)
+
+            logging.info("Finished processing all DEMs\n")
  
     def setup(self, yaml_file) -> None:
         """
@@ -152,16 +165,17 @@ class AutoRouteHandler:
         self.LAND_USE_FOLDER = "" 
         self.SIMULATION_FLOWFILE = ""
         self.FLOOD_FLOWFILE = ""
-        self.ID_COLUMN = ""
-        self.FLOW_COLUMN = ""
+        self.SIMULATION_ID_COLUMN = ""
+        self.SIMULATION_FLOW_COLUMN = ""
         self.EXTENT = None
         self.CROP = False
         self.OVERWRITE = False
-        self.STREAM_NAME = ""
+        self.STREAM_NAME = "" 
         self.STREAM_ID = ""
         self.BASE_FLOW_COLUMN = ""
         self.LAND_USE_NAME = ""
         self.MANNINGS_TABLE = ""
+        self.CLEAN_OUTPUTS = False
 
         self.AUTOROUTE = ""
         self.FLOODSPREADER = ""
@@ -475,7 +489,6 @@ class AutoRouteHandler:
                               height=ds.RasterYSize,
         )
         gdal.Rasterize(strm, tmp_streams, options=options)
-        logging.debug(f"Rasterizing {dem} using {self.STREAM_NETWORK_FOLDER} to {strm}")
         ds = None
         return strm
 
@@ -490,30 +503,30 @@ class AutoRouteHandler:
         if self.SIMULATION_FLOWFILE.endswith(('.csv', '.txt')):
             df = (
                 pd.read_csv(self.SIMULATION_FLOWFILE, sep=',')
-                .drop_duplicates(self.ID_COLUMN if self.ID_COLUMN else None) 
+                .drop_duplicates(self.SIMULATION_ID_COLUMN if self.SIMULATION_ID_COLUMN else None) 
                 .dropna()
             )
             if df.empty:
                 logging.error(f"No data in the flow file: {self.SIMULATION_FLOWFILE}")
                 return
-            if not self.ID_COLUMN:
-                self.ID_COLUMN =df.columns[0]
-            if self.ID_COLUMN not in df:
-                raise ValueError(f"The id field you've entered is not in the file\nids entered: {self.ID_COLUMN}, columns found: {list(df)}")
-            if not self.FLOW_COLUMN:
+            if not self.SIMULATION_ID_COLUMN:
+                self.SIMULATION_ID_COLUMN =df.columns[0]
+            if self.SIMULATION_ID_COLUMN not in df:
+                raise ValueError(f"The id field you've entered is not in the file\nids entered: {self.SIMULATION_ID_COLUMN}, columns found: {list(df)}")
+            if not self.SIMULATION_FLOW_COLUMN:
                 cols = df.columns
             else:
-                if isinstance(self.FLOW_COLUMN, str):
-                    if self.FLOW_COLUMN not in df.columns:
-                        raise ValueError(f"The flow field you've entered is not in the file\nflows entered: {self.FLOW_COLUMN}, columns found: {list(df)}")
-                    cols = [self.ID_COLUMN, self.FLOW_COLUMN]
-                elif isinstance(self.FLOW_COLUMN, list):
-                    if not all(f in df.columns for f in self.FLOW_COLUMN):
-                        raise ValueError(f"The flow fields you've entered is not in the file\nflows entered: {self.FLOW_COLUMN}, columns found: {list(df)}")
-                    cols = [self.ID_COLUMN] + self.FLOW_COLUMN
+                if isinstance(self.SIMULATION_FLOW_COLUMN, str):
+                    if self.SIMULATION_FLOW_COLUMN not in df.columns:
+                        raise ValueError(f"The flow field you've entered is not in the file\nflows entered: {self.SIMULATION_FLOW_COLUMN}, columns found: {list(df)}")
+                    cols = [self.SIMULATION_ID_COLUMN, self.SIMULATION_FLOW_COLUMN]
+                elif isinstance(self.SIMULATION_FLOW_COLUMN, list):
+                    if not all(f in df.columns for f in self.SIMULATION_FLOW_COLUMN):
+                        raise ValueError(f"The flow fields you've entered is not in the file\nflows entered: {self.SIMULATION_FLOW_COLUMN}, columns found: {list(df)}")
+                    cols = [self.SIMULATION_ID_COLUMN] + self.SIMULATION_FLOW_COLUMN
                 if self.BASE_FLOW_COLUMN:
                     if self.BASE_FLOW_COLUMN not in df.columns:
-                        raise ValueError(f"The baseflow field you've entered is not in the file\nflows entered: {self.FLOW_COLUMN}, columns found: {list(df)}")
+                        raise ValueError(f"The baseflow field you've entered is not in the file\nflows entered: {self.SIMULATION_FLOW_COLUMN}, columns found: {list(df)}")
                     cols.append(self.BASE_FLOW_COLUMN)
                     
             df = df[cols]
@@ -527,18 +540,17 @@ class AutoRouteHandler:
 
         indices = np.where(data_array > 0)
         values = data_array[indices]
-        matches = df[df[self.ID_COLUMN].isin(values)].shape[0]
+        matches = df[df[self.SIMULATION_ID_COLUMN].isin(values)].shape[0]
 
         if matches != df.shape[0]:
             logging.warning(f"{matches} id(s) out of {df.shape[0]} from your input file are present in the stream raster...")
         
         (
-            pd.DataFrame({'ROW': indices[0], 'COL': indices[1], self.ID_COLUMN: values})
-            .merge(df, on=self.ID_COLUMN, how='left')
+            pd.DataFrame({'ROW': indices[0], 'COL': indices[1], self.SIMULATION_ID_COLUMN: values})
+            .merge(df, on=self.SIMULATION_ID_COLUMN, how='left')
             .fillna(0)
             .to_csv(row_col_file, sep="\t", index=False)
         )
-        logging.info("Finished stream file")
         return row_col_file
 
     def create_flood_flowfile(self, strm: str) -> str:
@@ -575,7 +587,6 @@ class AutoRouteHandler:
             df[df[id_col].isin(ids)]
             .to_csv(flowfile,index=False)
         )
-        logging.info("Finished flow file")
         return flowfile
 
     def create_land_use(self, dem: str) -> str:
@@ -775,16 +786,16 @@ class AutoRouteHandler:
                 self._write(f,'Flow_RAPIDFile',rapid_flow_file)
 
                 self._write(f,'RowCol_From_RAPIDFile')
-                if not self.ID_COLUMN:
+                if not self.SIMULATION_ID_COLUMN:
                     logging.warning('Flow ID is not specified!!')
                 else:
-                    self._write(f,'RAPID_Flow_ID', self.ID_COLUMN)
-                if not self.FLOW_COLUMN:
+                    self._write(f,'RAPID_Flow_ID', self.SIMULATION_ID_COLUMN)
+                if not self.SIMULATION_FLOW_COLUMN:
                     logging.warning('Flow Params are not specified!!')
                 else:
-                    if not isinstance(self.FLOW_COLUMN, list):
-                        self.FLOW_COLUMN = [self.FLOW_COLUMN]
-                    self._write(f,'RAPID_Flow_Param', " ".join(self.FLOW_COLUMN))
+                    if not isinstance(self.SIMULATION_FLOW_COLUMN, list):
+                        self.SIMULATION_FLOW_COLUMN = [self.SIMULATION_FLOW_COLUMN]
+                    self._write(f,'RAPID_Flow_Param', " ".join(self.SIMULATION_FLOW_COLUMN))
                 if self.RAPID_Subtract_BaseFlow:
                     if not self.BASE_FLOW_COLUMN:
                         logging.warning('Base Flow Parameter is not specified, not subtracting baseflow')
@@ -1012,7 +1023,7 @@ class AutoRouteHandler:
             logging.error(f"Error running autoroute: {e}")
 
         if process.returncode == 0:
-            logging.info('Program finished')
+            logging.info('AutoRoute finished')
             return process.stdout.decode('utf-8')
         logging.error(f"Error running autoroute: {process.stdout.decode('utf-8')}")
         return process.stderr.decode('utf-8')
@@ -1022,10 +1033,15 @@ class AutoRouteHandler:
             exe = self._format_files(self.FLOODSPREADER.strip())
             mifn = self._format_files(mifn.strip())
 
-            # vdt = self.get_item_from_mifn(mifn, key='Print_VDT_Database')
-            # if vdt and os.path.exists(vdt) and not self.OVERWRITE:
-            #     logging.info(f"{vdt} already exists. Skipping...")
-            #     return
+            fld_map = self.get_item_from_mifn(mifn, key='OutFLD')
+            dep_map = self.get_item_from_mifn(mifn, key='OutDEP')
+            vel_map = self.get_item_from_mifn(mifn, key='OutVEL')
+            wse_map = self.get_item_from_mifn(mifn, key='OutWSE')
+            maps = {fld_map, dep_map, vel_map, wse_map} - {""}
+            
+            if all(os.path.exists(m) for m in maps) and not self.OVERWRITE:
+                logging.info(f"All maps already exist. Not running FloodSpreader...")
+                return
             
             process = subprocess.run(f'conda activate {self.AUTOROUTE_CONDA_ENV} && echo "a" | {exe} {mifn}', # We echo a dummy input in so that AutoRoute can terminate if some input is wrong
                                      stdout=asyncio.subprocess.PIPE,
@@ -1035,7 +1051,7 @@ class AutoRouteHandler:
             logging.error(f"Error running autoroute: {e}")
 
         if process.returncode == 0:
-            logging.info('Program finished')
+            logging.info('FloodSpreader finished')
             return process.stdout.decode('utf-8')
         logging.error(f"Error running autoroute: {process.stdout.decode('utf-8')}")
         return process.stderr.decode('utf-8')
@@ -1047,7 +1063,63 @@ class AutoRouteHandler:
         try:
             df = pd.read_csv(mifn, sep="\t", header=None).T 
             df = df.rename(columns=df.iloc[0]).iloc[1:]
+            if key not in df.columns:
+                return ""
             return df[key].values[0]
         except Exception as e:
             logging.error(f"Error reading '{key}' from {mifn}: {e}")
             return ""
+
+    def test_ok(self):
+        if self.AUTOROUTE or self.FLOODSPREADER:
+            process = subprocess.run(f'conda activate {self.AUTOROUTE_CONDA_ENV}',
+                                        stdout=asyncio.subprocess.PIPE,
+                                        stderr=asyncio.subprocess.PIPE,
+                                        shell=True,)
+            if process.returncode != 0:
+                logging.error(f"Error activating conda environment: {process.stderr.decode('utf-8')}")
+                raise ValueError(f"Error activating conda environment: {process.stderr.decode('utf-8')}")
+            
+    def optimize_outputs(self, mifn: str):
+        try:
+            fld_map = self.get_item_from_mifn(mifn, key='OutFLD')
+            dep_map = self.get_item_from_mifn(mifn, key='OutDEP')
+            vel_map = self.get_item_from_mifn(mifn, key='OutVEL')
+            wse_map = self.get_item_from_mifn(mifn, key='OutWSE')
+            maps = {fld_map, dep_map, vel_map, wse_map} - {""}
+            for m in maps:
+                if os.path.exists(m):
+                    ds = gdal.Open(m)
+                    geotransform = ds.GetGeoTransform()
+                    projection = ds.GetProjection()
+                    array = ds.ReadAsArray()
+                    ds = None
+
+                    noData = 0
+                    if 'flood' in os.path.basename(m):
+                        type = gdal.GDT_Byte
+                        predictor = 2       
+                    else:
+                        type = gdal.GDT_Float32
+                        predictor = 3
+                        if 'wse' in os.path.basename(m):
+                            noData = -9999
+
+                    # Delete the file and resave
+                    os.remove(m)
+                    driver: gdal.Driver = gdal.GetDriverByName('GTiff')
+                    ds: gdal.Dataset = driver.Create(m, 
+                                       array.shape[1], 
+                                       array.shape[0], 
+                                       1, 
+                                       type, 
+                                       options=["COMPRESS=DEFLATE", f"PREDICTOR={predictor}"])
+                    ds.SetGeoTransform(geotransform)
+                    ds.SetProjection(projection)
+                    ds.GetRasterBand(1).WriteArray(array)
+                    ds.GetRasterBand(1).SetNoDataValue(noData)
+                    ds = None
+        except Exception as e:
+            logging.error(f"Error cleaning outputs: {e}")
+
+
