@@ -12,9 +12,9 @@ sys.path.append(project_root)
 
 from autoroute.autoroute import AutoRouteHandler
 
-logging.basicConfig(level=logging.INFO,
-                    stream=sys.stdout,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+# logging.basicConfig(level=logging.INFO,
+#                     stream=sys.stdout,
+#                     format='%(asctime)s - %(levelname)s - %(message)s')
 
 run_extent=True
 @unittest.skip
@@ -137,8 +137,8 @@ class TestRowColIdFIle(unittest.TestCase):
         AutoRouteHandler(self.params).run()
 
         self.assertTrue(os.path.exists(self.output))
-        out_df = pd.read_csv(self.output, sep=' ')
-        val_df = pd.read_csv(self.validation, sep=' ')
+        out_df = pd.read_csv(self.output, sep='\t')
+        val_df = pd.read_csv(self.validation, sep='\t')
         out_df = out_df.reindex(sorted(out_df.columns), axis=1)
         val_df = val_df.reindex(sorted(val_df.columns), axis=1)
         self.assertTrue(out_df.equals(val_df), "Dataframes are not equal")
@@ -150,8 +150,8 @@ class TestRowColIdFIle(unittest.TestCase):
         AutoRouteHandler(self.params).run()
 
         self.assertTrue(os.path.exists(self.output))
-        out_df = pd.read_csv(self.output, sep=' ')
-        val_df = pd.read_csv(self.validation, sep= ' ')
+        out_df = pd.read_csv(self.output, sep='\t')
+        val_df = pd.read_csv(self.validation, sep= '\t')
         out_df = out_df.reindex(sorted(out_df.columns), axis=1)
         val_df = val_df.reindex(sorted(val_df.columns), axis=1)
         self.assertTrue(out_df.equals(val_df), "Dataframes are not equal")
@@ -277,29 +277,28 @@ class TestAutoRoute(unittest.TestCase):
               "LAND_USE_FOLDER": os.path.join("tests","test_data","LUs","single_4326"),
               "LAND_USE_NAME": "test_land",
               "SIMULATION_FLOWFILE":  os.path.join("tests","test_data","flow_files","v2_flows.csv",),
-               "ID_COLUMN": "LINKNO",
-               "FLOW_COLUMN": "max",
+               "SIMULATION_ID_COLUMN": "LINKNO",
+               "SIMULATION_FLOW_COLUMN": "max",
                "BASE_FLOW_COLUMN": "flow",
               "AUTOROUTE": os.path.join("tests","test_data","exes","AutoRoute_w_GDAL.exe"),
               "FLOODSPREADER": os.path.join("tests","test_data","exes", "AutoRoute_FloodSpreader.exe"),
                "AUTOROUTE_CONDA_ENV": "autoroute",
                 "MANNINGS_TABLE": os.path.join("tests","test_data","mannings_table","mannings.txt") }
-        self.output = os.path.join("test_ar_data","stream_files","test_dem__test_strm","N18W073_FABDEM_V1-2__strm.tif")
-        # self.validation = os.path.join("tests","test_data","validation","rasterization","N18W073_FABDEM_V1-2__strm_val.tif")
+        self.output = os.path.join("test_ar_data","vdts","test_dem__test_strm","N18W073_FABDEM_V1-2__vdt.txt")
+        self.validation = os.path.join("tests","test_data","validation","vdts","simple_inputs.txt")
         
-    # def tearDown(self) -> None:
-    #     if self.output and os.path.exists(self.output): os.remove(self.output) 
+    def tearDown(self) -> None:
+        if self.output and os.path.exists(self.output): os.remove(self.output) 
 
     def test_AutoRoute(self):
         AutoRouteHandler(self.params).run()
-
-        # self.assertTrue(os.path.exists(self.output))
-        # out_ds = gdal.Open(self.output)
-        # self.assertIsNotNone(out_ds)
-        # val_ds = gdal.Open(self.validation)
-        # self.assertTrue(np.array_equal(out_ds.ReadAsArray(), val_ds.ReadAsArray()), "Arrays are not equal")
-        # self.assertEqual(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), "GeoTransform is not equal")
-        # self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
+        2
+        self.assertTrue(os.path.exists(self.output), f"File does not exist: {self.output}")
+        with open(self.output) as f:
+            out = f.read()
+        with open(self.validation) as f:
+            val = f.read()
+        self.assertEqual(out, val, "VDT files are not equal")
 
 if __name__ == '__main__':
     unittest.main()
