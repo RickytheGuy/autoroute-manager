@@ -120,18 +120,25 @@ if __name__ == '__main__':
                                                         label='Overwrite',
                                                             #info='Overwrite existing files?',
                                                             interactive=True)
-                                buffer = gr.Checkbox(value=manager.default("buffer"),
-                                                    label='Buffer',
-                                                    info='Buffer the DEMs?',
-                                                    interactive=True)
+                                
                                 crop = gr.Checkbox(value=manager.default("crop"),
                                                 label='Crop',
                                                     info='Crop output to extent?',
                                                     interactive=True)
                                 clean_outputs = gr.Checkbox(value=manager.default("clean_outputs"),
-                                                    label='Clean Outputs',
-                                                    #info='Clean outputs?',
+                                                    label='Optimize Outputs',
+                                                    #info='Optimize outputs?',
                                                     interactive=True)
+                                with gr.Column():
+                                    buffer = gr.Checkbox(value=manager.default("buffer"),
+                                                        label='Buffer',
+                                                        info='Buffer the DEMs?',
+                                                        interactive=True)
+                                    buffer_distance = gr.Number(value=manager.default("buffer_distance"),
+                                                                label='Buffer Distance',
+                                                                visible=manager.default("buffer"),
+                                                                interactive=True)
+                                    buffer.change(lambda x: gr.Number(visible=x), inputs=buffer, outputs=buffer_distance)
                                 
                             vdt_file = gr.Textbox(value=manager.default("vdt"),
                                         placeholder='/User/Desktop/VDT/',
@@ -273,7 +280,7 @@ if __name__ == '__main__':
                                     box_size = gr.Slider(1,10,value=manager.default("box_size"),
                                                         step=1,
                                                         label='Box Size',
-                                                        visible=False,
+                                                        visible=manager.default("low_spot_use_box"),
                                                         interactive=True)
                                     low_spot_use_box.change(lambda x: gr.Slider(visible=x), inputs=low_spot_use_box, outputs=box_size)
 
@@ -281,7 +288,7 @@ if __name__ == '__main__':
                                     low_spot_find_flat_cutoff = gr.Number(value=manager.default("Low_Spot_Find_Flat"),
                                                                         label='Flow Cutoff',
                                                                         info='Low_Spot_Find_Flat',
-                                                                        visible=False,
+                                                                        visible=manager.default("find_flat"),
                                                                         interactive=True
                                                                         )
                                     find_flat.change(lambda x: gr.Number(visible=x), inputs=find_flat, outputs=low_spot_find_flat_cutoff)
@@ -401,7 +408,7 @@ if __name__ == '__main__':
                                 specify_depth = gr.Number(value=manager.default("FloodSpreader_SpecifyDepth"),
                                                         label='Specify Depth',
                                                             interactive=True,
-                                                            visible=False)
+                                                            visible='Specify Depth' in manager.default("omit_outliers"))
                                 omit_outliers.change(manager.omit_outliers_change, inputs=omit_outliers, outputs=[omit_outliers, wse_col, specify_depth])
 
                                 with gr.Row():
@@ -440,7 +447,7 @@ if __name__ == '__main__':
                                         bathy_twd_factor = gr.Number(value=manager.default("bathy_twd_factor"),
                                                                     label='Bathymetry Top Width Distance Factor',
                                                                     interactive=True,
-                                                                    visible=False)
+                                                                    visible='Inverse-Distance Weighted' in manager.default("fs_bathy_smooth_method"))
                                         fs_bathy_smooth_method.change(lambda x: gr.Number(visible=True) if x[0] == 'I' else gr.Number(visible=False),
                                                                     fs_bathy_smooth_method, bathy_twd_factor)
         
@@ -450,7 +457,7 @@ if __name__ == '__main__':
                                                         weight_angles, man_n, adjust_flow, bathy_alpha, ar_bathy_out_file, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
                                                         specify_depth, twd_factor, only_streams, use_ar_top_widths, flood_local, depth_map, flood_map, velocity_map, wse_map, fs_bathy_file, da_flow_param,
                                                         bathy_method,bathy_x_max_depth, bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,
-                                                        data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file, ar_exe, fs_exe, clean_outputs]
+                                                        data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file, ar_exe, fs_exe, clean_outputs, buffer_distance]
                 try:
                     run_button.click(fn=manager._run, inputs=inputs, outputs=[])
                 except Exception as e:

@@ -3,6 +3,7 @@ OVERWRITE: true # Whether to overwrite existing files
 DATA_DIR: "/Users/ricky/Desktop/ar_data" # Path somewhere to store temporary files
 DEM_FOLDER: "/Users/ricky/Desktop/MAC/MAC/DEM" # Path to folder containing DEMs to use
 BUFFER_FILES: false # Whether to buffer dem files, useful when stitching multiple floodmaps
+BUFFER_DISTANCE: 0.1 # Distance to buffer the dem files. Only used if BUFFER_FILES is true
 DEM_NAME: "DR_full" # Name representing these DEM files
 STREAM_NETWORK_FOLDER: "/Users/ricky/Downloads/streams_718" # Path to folder containing stream centerline files
 STREAM_NAME: "V2_streams" # Name representing the stream centerline files

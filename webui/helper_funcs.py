@@ -74,6 +74,7 @@ class ManagerFacade():
         55. bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,data_dir, minx, 
         60. miny, maxx, maxy, overwrite, buffer, 
         65. crop, vdt_file,  ar_exe, fs_exe, clean_outputs
+        70. buffer_distance
         """
         if len(args) < 69: return
         to_write = [
@@ -147,6 +148,7 @@ class ManagerFacade():
                     "bathy_twd_factor":args[57],
                     "fs_bathy_smooth_method":args[56],
                     "clean_outputs":args[69],
+                    "buffer_distance":args[70],
                 }
             }
         ]
@@ -241,7 +243,7 @@ class ManagerFacade():
                                                     weight_angles, man_n, adjust_flow, bathy_alpha, ar_bathy, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
                                                     specify_depth, twd_factor, only_streams, use_ar_top_widths, flood_local, depth_map, flood_map, velocity_map, wse_map, fs_bathy_file, da_flow_param,
                                                     bathy_method,bathy_x_max_depth, bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,
-                                                    data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file,  ar_exe, fs_exe, clean_outputs) -> None:
+                                                    data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file,  ar_exe, fs_exe, clean_outputs, buffer_distance) -> None:
         """
         Write the main input file
         """
@@ -253,6 +255,7 @@ class ManagerFacade():
                   "DATA_DIR": self._format_files(data_dir),
                   "DEM_FOLDER": self._format_files(dem),
                   "BUFFER_FILES": buffer,
+                  "BUFFER_DISTANCE": buffer_distance,
                   "DEM_NAME": dem_name,
                   "STREAM_NETWORK_FOLDER": self._format_files(strm_lines),
                   "STREAM_NAME": strm_name,

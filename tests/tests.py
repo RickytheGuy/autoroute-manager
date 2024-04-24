@@ -469,6 +469,24 @@ class TestFloodSpreader(unittest.TestCase):
         self.assertTrue(np.isclose((np.array(out_geo) - np.array(val_geo)).max(), 0), "GeoTransform is not equal")
         self.assertEqual(out_proj, val_proj, "Projection is not equal")
 
+    def test_buffer(self):
+        self.params["DEM_FOLDER"] = os.path.join("tests","test_data","DEMs","tiles"),
+        self.params["BUFFER_FILES"] = True
+
+        AutoRouteHandler(self.params).run()
+        
+        out_ds = gdal.Open(self.output)
+        self.assertIsNotNone(out_ds, "Problem opening file")
+        val_ds = gdal.Open(self.validation)
+        out_arr, val_arr = out_ds.ReadAsArray(), val_ds.ReadAsArray()
+        out_geo, val_geo = out_ds.GetGeoTransform(), val_ds.GetGeoTransform()
+        out_proj, val_proj = out_ds.GetProjection(), val_ds.GetProjection()
+        out_ds = None
+        self.assertTrue(np.array_equal(out_arr, val_arr), "Arrays are not equal")
+        self.assertTrue(np.isclose((np.array(out_geo) - np.array(val_geo)).max(), 0), "GeoTransform is not equal")
+        self.assertEqual(out_proj, val_proj, "Projection is not equal")
+
+
 
 if __name__ == '__main__':
     unittest.main()
