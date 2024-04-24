@@ -205,11 +205,12 @@ class AutoRouteHandler:
         self.box_size = 1
         self.find_flat = False
         self.low_spot_find_flat_cutoff = float('inf')
-        self.ar_bathy = False
+        self.ar_bathy_file = ''
         self.bathy_alpha = 0.001
         self.bathy_method = ''
         self.bathy_x_max_depth = 0.2
         self.bathy_y_shallow = 0.2
+
         self.da_flow_param = ''
         self.omit_outliers = ''
         self.wse_search_dist = 10
@@ -224,7 +225,7 @@ class AutoRouteHandler:
         self.FLOOD_MAP = ''
         self.VELOCITY_MAP = ''
         self.WSE_MAP = ''
-        self.fs_bathy = False
+        self.fs_bathy_file = ''
         self.fs_bathy_smooth_method = ''
         self.bathy_twd_factor = 1
 
@@ -804,13 +805,13 @@ class AutoRouteHandler:
                         self._write(f,'RAPID_Subtract_BaseFlow')
 
             if self.VDT:
-                vdt = os.path.join(self.VDT, f"{os.path.basename(dem).split('.')[0]}__vdt.txt")
+                vdt = os.path.join(self._format_files(self.VDT), f"{os.path.basename(dem).split('.')[0]}__vdt.txt")
+                if not os.path.isabs(vdt):
+                    vdt = os.path.abspath(vdt)
             else:
                 vdt = os.path.join(self.DATA_DIR, 'vdts', f"{self.DEM_NAME}__{self.STREAM_NAME}")
                 os.makedirs(vdt, exist_ok=True)
                 vdt = os.path.join(vdt, f"{os.path.basename(dem).split('.')[0]}__vdt.txt")
-            vdt = self._format_files(vdt)
-            self._check_type('VDT', vdt, ['.txt'])
             self._write(f,'Print_VDT_Database',vdt)
             self._write(f,'Print_VDT_Database_NumIterations',self.num_iterations)
 
@@ -825,7 +826,10 @@ class AutoRouteHandler:
             self._write(f,'Gen_Slope_Dist',self.slope_distance)
             if self.weight_angles:
                 self._write(f,'Weight_Angles',self.weight_angles)
-            self._write(f,'Use_Prev_D_4_XS',self.use_prev_d_4_xs)
+            if self.use_prev_d_4_xs == 0:
+                self._write(f,'Use_Prev_D_4_XS',0)
+            elif self.use_prev_d_4_xs != 1:
+                logging.warning('Use_Prev_D_4_XS must be 0 or 1. Will use AutoRoute\'s default value of 1')
             self._write(f,'ADJUST_FLOW_BY_FRACTION',self.adjust_flow)
             if self.Str_Limit_Val: self._write(f,'Str_Limit_Val',self.Str_Limit_Val)
             if not math.isinf(self.UP_Str_Limit_Val) and self.UP_Str_Limit_Val > 0: self._write(f,'UP_Str_Limit_Val',self.UP_Str_Limit_Val)
@@ -865,10 +869,11 @@ class AutoRouteHandler:
                 if self.low_spot_find_flat_cutoff < float('inf'):
                     self._write(f,'Low_Spot_Range_FlowCutoff',self.low_spot_find_flat_cutoff)
 
-            if self.ar_bathy:
-                bathy_file = os.path.join(self.DATA_DIR, 'ar_bathy')
-                os.makedirs(bathy_file, exist_ok=True)
-                bathy_file = os.path.join(bathy_file, f"{os.path.basename(dem).split('.')[0]}__ar_bathy.txt")
+            if self.ar_bathy_file:
+                if not os.path.isabs(self.ar_bathy_file):
+                    self.ar_bathy_file = os.path.abspath(self.ar_bathy_file)
+                os.makedirs(self.ar_bathy_file, exist_ok=True)
+                bathy_file = os.path.join(self.ar_bathy_file, f"{os.path.basename(dem).split('.')[0]}__ar_bathy.tif")
                 self._write(f,'BATHY_Out_File',bathy_file)
                 self._write(f,'Bathymetry_Alpha',self.bathy_alpha)
                 self._write(f,'Bathymetry')
@@ -910,6 +915,7 @@ class AutoRouteHandler:
                 elif self.omit_outliers == 'Use AutoRoute Depths':
                     self._write(f,'FloodSpreader_Use_AR_Depths')
                 elif self.omit_outliers == 'Smooth Water Surface Elevation':
+                    self._write(f,'FloodSpreader_SmoothWSE')
                     self._write(f,'FloodSpreader_SmoothWSE_SearchDist',self.wse_search_dist)
                     self._write(f,'FloodSpreader_SmoothWSE_FractStDev',self.wse_threshold)
                     if self.wse_remove_three:
@@ -921,39 +927,57 @@ class AutoRouteHandler:
                 else:
                     logging.warning(f'Unknown outlier omission option: {self.omit_outliers}')
 
-            self._write(f,'TopWidthDistanceFactor',self.twd_factor)
+            if self.twd_factor != 1.5:
+                self._write(f,'TopWidthDistanceFactor',self.twd_factor)
             if self.only_streams: self._write(f,'FloodSpreader_JustStrmDepths')
             if self.use_ar_top_widths: self._write(f,'FloodSpreader_Use_AR_TopWidth')
             if self.flood_local: self._write(f,'FloodLocalOnly')
 
             if self.DEPTH_MAP:
+                self.DEPTH_MAP = self._format_files(self.DEPTH_MAP)
+                os.makedirs(self.DEPTH_MAP, exist_ok=True)
+                if not os.path.isabs(self.DEPTH_MAP):
+                    self.DEPTH_MAP = os.path.abspath(self.DEPTH_MAP)
                 depth_map = self._format_files(os.path.join(self.DEPTH_MAP, f"{os.path.basename(dem).split('.')[0]}__depth.tif"))
                 if self.OVERWRITE or not os.path.exists(depth_map):
                     self._check_type('Depth Map',depth_map,['.tif'])
                     self._write(f,'OutDEP',depth_map)
 
             if self.FLOOD_MAP:
+                self.FLOOD_MAP = self._format_files(self.FLOOD_MAP)
+                os.makedirs(self.FLOOD_MAP, exist_ok=True)
+                if not os.path.isabs(self.FLOOD_MAP):
+                    self.FLOOD_MAP = os.path.abspath(self.FLOOD_MAP)
                 flood_map = self._format_files(os.path.join(self.FLOOD_MAP, f"{os.path.basename(dem).split('.')[0]}__flood.tif"))
                 if self.OVERWRITE or not os.path.exists(flood_map):
                     self._check_type('Flood Map',flood_map,['.tif'])
                     self._write(f,'OutFLD',flood_map)
 
             if self.VELOCITY_MAP:
+                self.VELOCITY_MAP = self._format_files(self.VELOCITY_MAP)
+                os.makedirs(self.VELOCITY_MAP, exist_ok=True)
+                if not os.path.isabs(self.VELOCITY_MAP):
+                    self.VELOCITY_MAP = os.path.abspath(self.VELOCITY_MAP)
                 velocity_map = self._format_files(os.path.join(self.VELOCITY_MAP, f"{os.path.basename(dem).split('.')[0]}__vel.tif"))
                 if self.OVERWRITE or not os.path.exists(velocity_map):
                     self._check_type('Velocity Map',velocity_map,['.tif'])
                     self._write(f,'OutVEL',velocity_map)
 
             if self.WSE_MAP:
+                self.WSE_MAP = self._format_files(self.WSE_MAP)
+                os.makedirs(self.WSE_MAP, exist_ok=True)
+                if not os.path.isabs(self.WSE_MAP):
+                    self.WSE_MAP = os.path.abspath(self.WSE_MAP)
                 wse_map = self._format_files(os.path.join(self.WSE_MAP, f"{os.path.basename(dem).split('.')[0]}__wse.tif"))
                 if self.OVERWRITE or not os.path.exists(wse_map):
                     self._check_type('WSE Map',wse_map,['.tif'])
                     self._write(f,'OutWSE',wse_map)
 
-            if self.fs_bathy and self.ar_bathy: 
-                fs_bathy_file = os.path.join(self.DATA_DIR, "bathy_fs")
-                os.makedirs(fs_bathy_file, exist_ok=True)
-                fs_bathy_file = os.path.join(fs_bathy_file, f"{os.path.basename(dem).split('.')[0]}__fs_bathy.tif")
+            if self.fs_bathy_file and self.ar_bathy_file: 
+                os.makedirs(self.fs_bathy_file, exist_ok=True)
+                if not os.path.isabs(self.fs_bathy_file):
+                    self.fs_bathy_file = os.path.abspath(self.fs_bathy_file)
+                fs_bathy_file = os.path.join(self._format_files(self.fs_bathy_file), f"{os.path.basename(dem).split('.')[0]}__fs_bathy.tif")
                 self._check_type('FloodSpreader Generated Bathymetry',fs_bathy_file,['.tif'])
                 self._write(f,'FSOutBATHY', fs_bathy_file)
                 if self.fs_bathy_smooth_method == 'Linear Interpolation':
@@ -1016,14 +1040,23 @@ class AutoRouteHandler:
                 return
 
             process = subprocess.run(f'conda activate {self.AUTOROUTE_CONDA_ENV} && echo "a" | {exe} {mifn}', # We echo a dummy input in so that AutoRoute can terminate if some input is wrong
-                                     stdout=asyncio.subprocess.PIPE,
-                                     stderr=asyncio.subprocess.PIPE,
+                                     stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE,
                                      shell=True,)
         except Exception as e:
             logging.error(f"Error running autoroute: {e}")
 
         if process.returncode == 0:
-            logging.info('AutoRoute finished')
+            line = ''
+            for l in process.stdout.decode('utf-8').splitlines():
+                if 'error' in l.lower() and not any({'Perimeter' in l, 'Area' in l,  'Finder' in l}) or 'PROBLEMS' in l:
+                    line = l
+                    break
+                
+            if line:
+                logging.error(f"Error running AutoRoute: {line}")
+            else:
+                logging.info('AutoRoute finished')
             return process.stdout.decode('utf-8')
         logging.error(f"Error running autoroute: {process.stdout.decode('utf-8')}")
         return process.stderr.decode('utf-8')
@@ -1037,21 +1070,34 @@ class AutoRouteHandler:
             dep_map = self.get_item_from_mifn(mifn, key='OutDEP')
             vel_map = self.get_item_from_mifn(mifn, key='OutVEL')
             wse_map = self.get_item_from_mifn(mifn, key='OutWSE')
-            maps = {fld_map, dep_map, vel_map, wse_map} - {""}
+            fs_bathy_file = self.get_item_from_mifn(mifn, key='FSOutBATHY')
+            maps = {fld_map, dep_map, vel_map, wse_map, fs_bathy_file} - {""}
             
             if all(os.path.exists(m) for m in maps) and not self.OVERWRITE:
                 logging.info(f"All maps already exist. Not running FloodSpreader...")
                 return
+            # We must remove these maps in order for FloodSpreader to succesfuly run
+            {os.remove(m) for m in maps if os.path.exists(m)}
             
             process = subprocess.run(f'conda activate {self.AUTOROUTE_CONDA_ENV} && echo "a" | {exe} {mifn}', # We echo a dummy input in so that AutoRoute can terminate if some input is wrong
-                                     stdout=asyncio.subprocess.PIPE,
-                                     stderr=asyncio.subprocess.PIPE,
+                                     stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE,
                                      shell=True,)
         except Exception as e:
             logging.error(f"Error running autoroute: {e}")
+            return e
 
         if process.returncode == 0:
-            logging.info('FloodSpreader finished')
+            line = ''
+            for l in process.stdout.decode('utf-8').splitlines():
+                if 'error' in l.lower() or 'PROBLEMS' in l:
+                    line = l
+                    break
+                
+            if line:
+                logging.error(f"Error running FloodSpreader: {line}")
+            else:
+                logging.info('FloodSpreader finished')
             return process.stdout.decode('utf-8')
         logging.error(f"Error running autoroute: {process.stdout.decode('utf-8')}")
         return process.stderr.decode('utf-8')

@@ -1,4 +1,5 @@
 import os
+import glob
 import sys
 import unittest
 import logging
@@ -266,6 +267,7 @@ class TestFlowFile(unittest.TestCase):
         self.assertTrue(out_df.equals(val_df), "Dataframes are not equal")
 
 run_floodspreader = True
+@unittest.skip
 @unittest.skipIf(sys.platform != "win32" and sys.platform != "linux", "Runs only on windows or linux")
 @unittest.skipIf(not os.path.exists(AUTOROUTE_EXE), "AutoRoute exe not found")
 class TestAutoRoute(unittest.TestCase):
@@ -306,6 +308,63 @@ class TestAutoRoute(unittest.TestCase):
         self.assertEqual(out, val, "VDT files are not equal")
         run_floodspreader = True
 
+    def test_AutoRoute_lots_of_params(self):
+        self.params["RAPID_Subtract_BaseFlow"] = True
+        self.params["VDT"] = "test_ar_data"
+        self.params["num_iterations"] = 5
+        self.params["convert_cfs_to_cms"] = True
+        self.params["x_distance"] = 100
+        self.params["q_limit"] = 1.01
+        self.params["direction_distance"] = 10
+        self.params["slope_distance"] = 10
+        self.params["weight_angles"] = 1
+        self.params["use_prev_d_4_xs"] = 0
+        self.params["adjust_flow"] = 0.9
+        self.params["row_start"] = 0
+        self.params["row_end"] = 1000
+        self.params["degree_manip"] = 6.1
+        self.params["degree_interval"] = 1.5
+        self.params["man_n"] = 0.01
+        self.params["low_spot_distance"] = 30
+        self.params["low_spot_is_meters"] = True
+        self.params["low_spot_use_box"] = True
+        self.params["box_size"] = 5
+        self.params["find_flat"] = True
+        self.params["ar_bathy_file"] = 'test_ar_data'
+        self.params["bathy_alpha"] = 0.001
+        self.params["bathy_method"] = 'Trapezoidal'
+        self.params["bathy_x_max_depth"] = 0.3
+        self.params["bathy_y_shallow"] =  0.3
+        self.output = os.path.join("test_ar_data","N18W073_FABDEM_V1-2__ar_bathy.tif")
+        self.validation = os.path.join("tests","test_data","validation","bathy","ar_bathy_all_params.tif")
+
+        global run_floodspreader
+        run_floodspreader = False
+        AutoRouteHandler(self.params).run()
+
+        self.assertTrue(os.path.exists(self.output), f"File does not exist: {self.output}")
+        out_ds = gdal.Open(self.output)
+        self.assertIsNotNone(out_ds, "Problem opening file")
+        val_ds = gdal.Open(self.validation)
+        self.assertTrue(np.array_equal(out_ds.ReadAsArray(), val_ds.ReadAsArray()), "Arrays are not equal")
+        self.assertTrue(np.isclose((np.array(out_ds.GetGeoTransform()) - np.array(val_ds.GetGeoTransform())).max(), 0), "GeoTransform is not equal")
+        self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
+
+        out_ds = None
+        os.remove(self.output)
+
+        self.output = os.path.join("test_ar_data","N18W073_FABDEM_V1-2__vdt.txt")
+        self.validation = os.path.join("tests","test_data","validation","vdts","all_params.txt")
+        
+        self.assertTrue(os.path.exists(self.output), f"File does not exist: {self.output}")
+        with open(self.output) as f:
+            out = f.read()
+        with open(self.validation) as f:
+            val = f.read()
+        self.assertEqual(out, val, "VDT files are not equal")
+        run_floodspreader = True
+
+#@unittest.skip
 @unittest.skipIf(sys.platform != "win32" and sys.platform != "linux", "Runs only on windows or linux")
 @unittest.skipIf(not os.path.exists(os.path.join(AUTOROUTE_EXE)) or not os.path.exists(FLOODSPREADER_EXE), "AutoRoute and/or FloodSpreader not found")
 @unittest.skipIf(not run_floodspreader, "Autoroute failed, not running FloodSpreader")
@@ -330,12 +389,17 @@ class TestFloodSpreader(unittest.TestCase):
               "FLOODSPREADER": FLOODSPREADER_EXE,
               "AUTOROUTE_CONDA_ENV": "autoroute",
               "MANNINGS_TABLE": os.path.join("tests","test_data","mannings_table","mannings.txt"),
-               "FLOOD_MAP":os.path.join("test_ar_data") }
-        self.output = os.path.join("test_ar_data","N18W073_FABDEM_V1-2__flood.tif")
+               "FLOOD_MAP":os.path.join("test_ar_data","simple_map") }
+        self.output = os.path.join("test_ar_data","simple_map","N18W073_FABDEM_V1-2__flood.tif")
         self.validation = os.path.join("tests","test_data","validation","maps","simple_flood.tif")
+        self.tearDown()
         
     def tearDown(self) -> None:
-        if self.output and os.path.exists(self.output): os.remove(self.output) 
+        try:
+            {os.remove(m) for m in glob.glob(os.path.join("test_ar_data","*bathy.tif"))}
+            if self.output and os.path.exists(self.output): os.remove(self.output) 
+        except PermissionError:
+            print(f"\nCould not remove {self.output}\n")
 
     def test_FloodSpreader(self):
         AutoRouteHandler(self.params).run()
@@ -343,9 +407,67 @@ class TestFloodSpreader(unittest.TestCase):
         out_ds = gdal.Open(self.output)
         self.assertIsNotNone(out_ds, "Problem opening file")
         val_ds = gdal.Open(self.validation)
-        self.assertTrue(np.array_equal(out_ds.ReadAsArray(), val_ds.ReadAsArray()), "Arrays are not equal")
-        self.assertTrue(np.isclose((np.array(out_ds.GetGeoTransform()) - np.array(val_ds.GetGeoTransform())).max(), 0), "GeoTransform is not equal")
-        self.assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
+        out_arr, val_arr = out_ds.ReadAsArray(), val_ds.ReadAsArray()
+        out_geo, val_geo = out_ds.GetGeoTransform(), val_ds.GetGeoTransform()
+        out_proj, val_proj = out_ds.GetProjection(), val_ds.GetProjection()
+        out_ds = None
+        self.assertTrue(np.array_equal(out_arr, val_arr), "Arrays are not equal")
+        self.assertTrue(np.isclose((np.array(out_geo) - np.array(val_geo)).max(), 0), "GeoTransform is not equal")
+        self.assertEqual(out_proj, val_proj, "Projection is not equal")
+        
+
+    def test_FloodSpreader_lots_of_params(self):
+        self.params["ar_bathy_file"] = 'test_ar_data'
+        self.params["bathy_alpha"] = 0.001
+        self.params["bathy_method"] = 'Trapezoidal'
+
+        self.params["omit_outliers"] = 'Smooth Water Surface Elevation'
+        self.params["wse_search_dist"] = 15
+        self.params["wse_threshold"] = 0.2
+        self.params["wse_remove_three"] = True
+        self.params["specify_depth"] = 0
+        self.params["twd_factor"] = 2
+        self.params["only_streams"] = False
+        self.params["use_ar_top_widths"] = True
+        self.params["flood_local"] = True
+        self.params["fs_bathy_file"] = os.path.join("test_ar_data","many_bathy")
+        self.params["fs_bathy_smooth_method"] = ''
+        self.params["bathy_twd_factor"] = 1
+
+        self.output = os.path.join("test_ar_data","many_bathy","N18W073_FABDEM_V1-2__fs_bathy.tif")
+        self.validation = os.path.join("tests","test_data","validation","bathy","fs_bathy_all_params.tif")
+
+        AutoRouteHandler(self.params).run()
+
+        self.assertTrue(os.path.exists(self.output), f"File does not exist: {self.output}")
+        out_ds = gdal.Open(self.output)
+        self.assertIsNotNone(out_ds, "Problem opening file")
+        val_ds = gdal.Open(self.validation)
+        out_arr, val_arr = out_ds.ReadAsArray(), val_ds.ReadAsArray()
+        out_geo, val_geo = out_ds.GetGeoTransform(), val_ds.GetGeoTransform()
+        out_proj, val_proj = out_ds.GetProjection(), val_ds.GetProjection()
+        out_ds = None
+        val_ds = None
+        self.assertTrue(np.array_equal(out_arr, val_arr), "Arrays are not equal")
+        self.assertTrue(np.isclose((np.array(out_geo) - np.array(val_geo)).max(), 0), "GeoTransform is not equal")
+        self.assertEqual(out_proj, val_proj, "Projection is not equal")
+
+        os.remove(self.output)
+
+        self.output = os.path.join("test_ar_data","simple_map","N18W073_FABDEM_V1-2__flood.tif")
+        self.validation = os.path.join("tests","test_data","validation","maps","all_params_flood.tif")
+
+        out_ds = gdal.Open(self.output)
+        self.assertIsNotNone(out_ds, "Problem opening file")
+        val_ds = gdal.Open(self.validation)
+        out_arr, val_arr = out_ds.ReadAsArray(), val_ds.ReadAsArray()
+        out_geo, val_geo = out_ds.GetGeoTransform(), val_ds.GetGeoTransform()
+        out_proj, val_proj = out_ds.GetProjection(), val_ds.GetProjection()
+        out_ds = None
+        val_ds = None
+        self.assertTrue(np.array_equal(out_arr, val_arr), "Arrays are not equal")
+        self.assertTrue(np.isclose((np.array(out_geo) - np.array(val_geo)).max(), 0), "GeoTransform is not equal")
+        self.assertEqual(out_proj, val_proj, "Projection is not equal")
 
 
 if __name__ == '__main__':

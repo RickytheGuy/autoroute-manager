@@ -301,7 +301,7 @@ class ManagerFacade():
                   "box_size": box_size,
                   "find_flat": find_flat,
                   "low_spot_find_flat_cutoff": low_spot_find_flat_cutoff,
-                  "ar_bathy": self._format_files(ar_bathy),
+                  "ar_bathy_file": self._format_files(ar_bathy),
                   "bathy_alpha": bathy_alpha,
                   "bathy_method": bathy_method,
                   "bathy_x_max_depth": bathy_x_max_depth,
@@ -316,7 +316,7 @@ class ManagerFacade():
                   "only_streams": only_streams,
                   "use_ar_top_widths": use_ar_top_widths,
                   "flood_local": flood_local,
-                  "fs_bathy": fs_bathy_file,
+                  "fs_bathy_file": fs_bathy_file,
                   "fs_bathy_smooth_method": fs_bathy_smooth_method,
                   "bathy_twd_factor": bathy_twd_factor,
         }
