@@ -13,6 +13,7 @@ import asyncio
 import geopandas as gpd
 import pandas as pd
 import numpy as np
+import xarray as xr
 import fiona
 import yaml
 from osgeo import gdal, osr
@@ -254,8 +255,8 @@ class AutoRouteHandler:
                     setattr(self, key, value)
 
         if not self.DATA_DIR:
-            logging.error('No working folder provided!')
-            return
+            logging.warning(f'No working folder provided! Using {os.getcwd()}')
+            self.DATA_DIR = os.getcwd()
         if not os.path.isabs(self.DATA_DIR):
             self.DATA_DIR = os.path.abspath(self.DATA_DIR)
         os.makedirs(self.DATA_DIR, exist_ok = True)
@@ -399,6 +400,10 @@ class AutoRouteHandler:
         Reads .parquet, .shp, .gpkg, and potentially others and returns in a way we expect.
         """
         global GPD_ENGINE
+        if None in columns or [] in columns:
+            # Stream id was never specified, so we assume that the id is the first entry in the file
+            columns = None
+            
         if path.endswith((".parquet", ".geoparquet")):
             if columns:
                 df = gpd.read_parquet(path, columns=columns)
@@ -444,6 +449,10 @@ class AutoRouteHandler:
         if not filenames:
             logging.warning(f"No stream files found in {self.STREAM_NETWORK_FOLDER}")
             return
+        
+        if self.STREAM_ID == None:
+            logging.warning(f"No stream id provided. We will try to assume that the first column is the id. If this is not the case, please provide the stream id.")
+        
         tmp_streams = os.path.join(self.DATA_DIR, 'tmp', f'{os.path.basename(dem).split('.')[0].replace('_buff','')}.{GEOMETRY_SAVE_EXTENSION}')
         try:
             dfs = []
@@ -477,6 +486,11 @@ class AutoRouteHandler:
             else:
                 logging.warning(f"No streams were found in the extent of {dem}")
                 return
+            
+            if self.STREAM_ID is None or self.STREAM_ID == []:
+                logging.info("Setting stream id as {df.columns[0]}")
+                self.STREAM_ID = df.columns[0]
+            
             if GEOMETRY_SAVE_EXTENSION == "parquet":
                 df.to_parquet(tmp_streams)
             else:
@@ -508,19 +522,20 @@ class AutoRouteHandler:
             logging.info(f"{row_col_file} already exists. Skipping...")
             return row_col_file
 
-        if self.SIMULATION_FLOWFILE.endswith(('.csv', '.txt')):
-            df = (
-                pd.read_csv(self.SIMULATION_FLOWFILE, sep=',')
-                .drop_duplicates(self.SIMULATION_ID_COLUMN if self.SIMULATION_ID_COLUMN else None) 
-                .dropna()
-            )
-            if df.empty:
-                logging.error(f"No data in the flow file: {self.SIMULATION_FLOWFILE}")
-                return
+        if self.SIMULATION_FLOWFILE.lower().endswith(('.csv', '.txt', '.nc','.nc3','.nc4')):
+            if self.SIMULATION_FLOWFILE.lower().endswith(('.csv', '.txt')):
+                df = pd.read_csv(self.SIMULATION_FLOWFILE, sep=',')
+            elif self.SIMULATION_FLOWFILE.lower().endswith(('.nc','.nc3','.nc4')):
+                df = (xr.open_dataset(self.SIMULATION_FLOWFILE)
+                      .to_dataframe()
+                      .reset_index() # This gets the first column back instead of being an index
+                )
+                
             if not self.SIMULATION_ID_COLUMN:
                 self.SIMULATION_ID_COLUMN =df.columns[0]
             if self.SIMULATION_ID_COLUMN not in df:
-                raise ValueError(f"The id field you've entered is not in the file\nids entered: {self.SIMULATION_ID_COLUMN}, columns found: {list(df)}")
+                logging.warning(f"The id field you've entered is not in the file\nids entered: {self.SIMULATION_ID_COLUMN}, columns found: {list(df)}\n\tWe will assume the first column is the id column: {df.columns[0]}")
+                self.SIMULATION_ID_COLUMN = df.columns[0]
             if not self.SIMULATION_FLOW_COLUMN:
                 cols = df.columns
             else:
@@ -537,7 +552,16 @@ class AutoRouteHandler:
                         raise ValueError(f"The baseflow field you've entered is not in the file\nflows entered: {self.SIMULATION_FLOW_COLUMN}, columns found: {list(df)}")
                     cols.append(self.BASE_FLOW_COLUMN)
                     
+            df = (
+                df.drop_duplicates(self.SIMULATION_ID_COLUMN if self.SIMULATION_ID_COLUMN else None) 
+                .dropna()
+            )
             df = df[cols]
+            if df.empty:
+                logging.error(f"No data in the flow file: {self.SIMULATION_FLOWFILE}")
+                return
+            
+
         else:
             raise NotImplementedError(f"Unsupported file type: {self.SIMULATION_FLOWFILE}")
                 
@@ -1044,6 +1068,9 @@ class AutoRouteHandler:
     def run_autoroute(self, mifn: str) -> None:
         try:
             exe = self._format_files(self.AUTOROUTE.strip())
+            if not os.path.exists(exe):
+                logging.error(f"AutoRoute executable not found: {exe}")
+                return
             mifn = self._format_files(mifn.strip())
 
             vdt = self.get_item_from_mifn(mifn, key='Print_VDT_Database')
@@ -1066,6 +1093,8 @@ class AutoRouteHandler:
             
         if line:
             logging.error(f"Error running AutoRoute: {line}")
+        elif process.returncode != 0:
+            logging.error(f"Error running AutoRoute: {process.stderr.decode('utf-8')}")
         else:
             logging.info('AutoRoute finished')
         return process.stdout.decode('utf-8') + process.stderr.decode('utf-8')
@@ -1073,6 +1102,10 @@ class AutoRouteHandler:
     def run_floodspreader(self, mifn: str) -> None:
         try:
             exe = self._format_files(self.FLOODSPREADER.strip())
+            if not os.path.exists(exe):
+                logging.error(f"FloodSpreader executable not found: {exe}")
+                return
+            
             mifn = self._format_files(mifn.strip())
 
             fld_map = self.get_item_from_mifn(mifn, key='OutFLD')
@@ -1104,6 +1137,8 @@ class AutoRouteHandler:
             
         if line:
             logging.error(f"Error running FloodSpreader: {line}")
+        elif process.returncode != 0:
+            logging.error(f"Error running AutoRoute: {process.stderr.decode('utf-8')}")
         else:
             logging.info('FloodSpreader finished')
         return process.stdout.decode('utf-8') + process.stderr.decode('utf-8')
