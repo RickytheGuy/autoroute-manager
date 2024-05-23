@@ -13,6 +13,7 @@ import asyncio
 import re
 import glob
 import sys
+import xarray as xr
 
 from osgeo import gdal, ogr
 from shapely.geometry import LineString
@@ -155,6 +156,8 @@ class ManagerFacade():
 
         with open(self.docs_file, 'w', encoding='utf-8') as f:
             f.write(json.dumps(to_write, indent=4))
+            
+        logging.info("Parameters saved!")
 
     #@staticmethod
     def _format_files(self,file_path: str) -> str:
@@ -217,12 +220,16 @@ class ManagerFacade():
         if not os.path.exists(flow_file):
             return None, None, None, None
         try:
-            cols = sorted(list(pd.read_csv(flow_file, delimiter=',').columns))
-            if len(cols) <= 1:
-                try:
-                    cols = sorted(list(pd.read_csv(flow_file, delimiter=' ').columns))
-                except:
-                    return None, None, None, None
+            if flow_file.lower().endswith(('.csv', '.txt')):
+                cols = sorted(list(pd.read_csv(flow_file, delimiter=',').columns))
+                if len(cols) <= 1:
+                    try:
+                        cols = sorted(list(pd.read_csv(flow_file, delimiter=' ').columns))
+                    except:
+                        return None, None, None, None
+            elif flow_file.lower().endswith(('.nc', '.nc3','.nc4')):
+                ds = xr.open_dataset(flow_file)
+                cols = sorted(list(ds.data_vars))
         except:
                 return None, None, None, None
 
