@@ -57,7 +57,9 @@ class AutoRouteHandler:
         self.test_ok()
         if self.DEM_FOLDER:
             if os.path.isdir(self.DEM_FOLDER):
-                dems = {os.path.join(self.DEM_FOLDER,f) for f in os.listdir(self.DEM_FOLDER) if f.lower().endswith((".tif", ".vrt"))}
+                # Get all .tif files in the folder and subfolders using walkdir
+                dems = {os.path.join(root, f) for root, _, files in os.walk(self.DEM_FOLDER) for f in files if f.lower().endswith((".tif", ".vrt"))}
+                #dems = {os.path.join(self.DEM_FOLDER,f) for f in os.listdir(self.DEM_FOLDER) if f.lower().endswith((".tif", ".vrt"))}
             elif os.path.isfile(self.DEM_FOLDER):
                 dems = {self.DEM_FOLDER}
             elif not os.path.exists(self.DEM_FOLDER):
