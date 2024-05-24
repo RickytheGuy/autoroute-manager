@@ -13,7 +13,6 @@ Create a new enviroment from the environment yaml file included like so:
 
 COMING SOON....
 
-```
 
 ### GDAL for AutoRoute (Windows)
 AutoRoute, as it currently stands, was compiled on Windows with GDAL 2.2.3. Assuming your windows is 64 bit, download gdal-202-1700-x64-core.msi [here](https://www.gisinternals.com/query2.html?content=filelist&file=release-1700-x64-gdal-2-2-3-mapserver-7-0-7.zip). Run the installer. By default, it will try to install GDAL either in Program Files or in the top level C:\.
