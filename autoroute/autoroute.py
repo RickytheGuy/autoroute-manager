@@ -49,6 +49,7 @@ class AutoRouteHandler:
             self.setup(yaml)
 
     def run(self) -> None:
+        logging.info("Starting model run...")
         dems = []
         strms = []
         lus = []
@@ -83,15 +84,15 @@ class AutoRouteHandler:
         with multiprocessing.Pool(processes=processes) as pool:
             if self.BUFFER_FILES and self.DEM_FOLDER:
                 logging.info(f"Buffering {n_dems} DEM(s)...")
-                dems = pool.map(self.buffer_dem, dems)
+                dems = list(tqdm.tqdm(pool.imap_unordered(self.buffer_dem, dems)))
 
             elif self.CROP and self.EXTENT and self.DEM_FOLDER:
                 logging.info(f"Cropping {n_dems} DEM(s)...")
-                dems = pool.map(self.crop, dems)
+                dems = list(tqdm.tqdm(pool.imap_unordered(self.crop, dems), total=len(dems)))
 
             if self.STREAM_NETWORK_FOLDER or self.STREAM_NAME:
                 logging.info(f"Creating stream rasters for {n_dems} DEM(s)...")
-                strms = pool.map(self.create_strm_file, dems)
+                strms = list(tqdm.tqdm(pool.imap_unordered(self.create_strm_file, dems), total=len(dems)))
             else:
                 logging.error("No stream network folder or stream name provided. Exiting...")
                 return
@@ -102,18 +103,20 @@ class AutoRouteHandler:
 
             if self.LAND_USE_FOLDER:
                 logging.info(f"Creating land use rasters for {n_dems} DEM(s)...")
-                lus = pool.map(self.create_land_use, dems)
+                lus = list(tqdm.tqdm(pool.imap_unordered(self.create_land_use, dems), total=len(dems)))
 
             # strms = glob.glob(os.path.join(self.DATA_DIR, 'stream_files', f"{self.DEM_NAME}__{self.STREAM_NAME}","*.tif"))
             if not self.DEM_FOLDER and self.EXTENT:
                 strms = {strm for strm in strms if self.is_in_extent(strm, self.EXTENT)}
             if strms and self.SIMULATION_FLOWFILE:
-                logging.info(f"Creating row col id files for {n_strms} Stream Raster(s)...")
-                sim_flow_files = pool.map(self.create_row_col_id_file, strms)
+                #logging.info(f"Creating row col id files for {n_strms} Stream Raster(s)...")
+                sim_flow_files =list(tqdm.tqdm( pool.imap_unordered(self.create_row_col_id_file, strms), total=len(strms),desc='Creating row col id files'))
+                if self.multiprocess_data.get('SIMULATION_ID_COLUMN', False):
+                    self.SIMULATION_ID_COLUMN = self.multiprocess_data['SIMULATION_ID_COLUMN']
 
             if self.FLOOD_FLOWFILE:
-                logging.info(f"Creating flood flow files for {n_strms} Stream Raster(s)...")
-                flood_files = pool.map(self.create_flood_flowfile, strms)
+                #logging.info(f"Creating flood flow files for {n_strms} Stream Raster(s)...")
+                flood_files =list(tqdm.tqdm( pool.imap_unordered(self.create_flood_flowfile, strms), total=len(strms),desc='Creating flow files'))
             
             pairs = self._zip_files(dems, strms, lus, sim_flow_files, flood_files)
             if self.AUTOROUTE or self.FLOODSPREADER:
@@ -124,19 +127,20 @@ class AutoRouteHandler:
                     logging.warning(f"Only {len(mifns)} mifn files were created out of {n_dems} DEMs")
 
             if self.AUTOROUTE:
-                logging.info(f"Running AutoRoute on {len(mifns)} DEM(s)...")
-                pool.map(self.run_autoroute, mifns)
+                #logging.info(f"Running AutoRoute on {len(mifns)} DEM(s)...")
+                set(tqdm.tqdm(pool.imap_unordered(self.run_autoroute, mifns), total=len(mifns), desc="Running AutoRoute"))
 
             if self.FLOODSPREADER:
                 if not self.FLOOD_FLOWFILE:
                     logging.warning("FloodSpreader requires a flood flow file. Will not run...")
                 else:
-                    logging.info(f"Running FloodSpreader on {len(mifns)} input files...")
-                    pool.map(self.run_floodspreader, mifns)
+                    #logging.info(f"Running FloodSpreader on {len(mifns)} input files...")
+                    set(tqdm.tqdm(pool.imap_unordered(self.run_floodspreader, mifns), total=len(mifns), desc='Running FloodSpreader'))
+                    logging.info('FloodSpreader finished')
 
             if self.CLEAN_OUTPUTS:
-                logging.info(f"Optimizing outputs for {len(mifns)} input files...")
-                pool.map(self.optimize_outputs, mifns)
+                #logging.info(f"Optimizing outputs for {len(mifns)} input files...")
+                set(tqdm.tqdm(pool.imap_unordered(self.optimize_outputs, mifns), total=len(mifns), desc="Optimizing outputs"))
 
             logging.info("Finished processing all inputs\n")
  
@@ -194,6 +198,7 @@ class AutoRouteHandler:
         self.LAND_USE_NAME = ""
         self.MANNINGS_TABLE = ""
         self.CLEAN_OUTPUTS = False
+        self.multiprocess_data = multiprocessing.Manager().dict()
 
         self.AUTOROUTE = ""
         self.FLOODSPREADER = ""
@@ -436,7 +441,7 @@ class AutoRouteHandler:
         os.makedirs(strm, exist_ok=True)
         strm = os.path.join(strm, f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__strm.tif")
         if not self.OVERWRITE and os.path.exists(strm):
-            logging.info(f"{strm} already exists. Skipping...")
+            #logging.info(f"{strm} already exists. Skipping...")
             return strm
         
         minx, miny, maxx, maxy = self.get_ds_extent(ds)
@@ -521,7 +526,7 @@ class AutoRouteHandler:
         os.makedirs(row_col_file, exist_ok=True)
         row_col_file = os.path.join(row_col_file, f"{os.path.basename(strm).split('.')[0]}__row_col_id.txt")
         if not self.OVERWRITE and os.path.exists(row_col_file):
-            logging.info(f"{row_col_file} already exists. Skipping...")
+            #logging.info(f"{row_col_file} already exists. Skipping...")
             return row_col_file
 
         if self.SIMULATION_FLOWFILE.lower().endswith(('.csv', '.txt', '.nc','.nc3','.nc4')):
@@ -535,9 +540,11 @@ class AutoRouteHandler:
                 
             if not self.SIMULATION_ID_COLUMN:
                 self.SIMULATION_ID_COLUMN =df.columns[0]
+                self.multiprocess_data['SIMULATION_ID_COLUMN'] = df.columns[0]
             if self.SIMULATION_ID_COLUMN not in df:
                 logging.warning(f"The id field you've entered is not in the file\nids entered: {self.SIMULATION_ID_COLUMN}, columns found: {list(df)}\n\tWe will assume the first column is the id column: {df.columns[0]}")
                 self.SIMULATION_ID_COLUMN = df.columns[0]
+                self.multiprocess_data['SIMULATION_ID_COLUMN'] = df.columns[0]
             if not self.SIMULATION_FLOW_COLUMN:
                 cols = df.columns
             else:
@@ -594,7 +601,7 @@ class AutoRouteHandler:
         os.makedirs(flowfile, exist_ok=True)
         flowfile = os.path.join(flowfile, f"{os.path.basename(strm).split('.')[0]}__flow.txt")
         if not self.OVERWRITE and os.path.exists(flowfile):
-            logging.info(f"{flowfile} already exists. Skipping...")
+           # logging.info(f"{flowfile} already exists. Skipping...")
             return flowfile
 
         if self.FLOOD_FLOWFILE.endswith(('.csv', '.txt')):
@@ -631,7 +638,7 @@ class AutoRouteHandler:
         os.makedirs(lu_file, exist_ok=True)
         lu_file = os.path.join(lu_file, f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__lu.vrt")
         if not self.OVERWRITE and os.path.exists(lu_file):
-            logging.info(f"{lu_file} already exists. Skipping...")
+            #logging.info(f"{lu_file} already exists. Skipping...")
             return lu_file
         dem_ds = self.open_w_gdal(dem)
         if not dem_ds: 
@@ -749,7 +756,7 @@ class AutoRouteHandler:
 
         cropped_dem = os.path.join(self.DATA_DIR, 'dems', self.DEM_NAME, self.create_fname(minx, miny, maxx, maxy, append='_crop'))
         if not self.OVERWRITE and os.path.exists(cropped_dem):
-            logging.info(f"{cropped_dem} already exists. Skipping...")
+            #logging.info(f"{cropped_dem} already exists. Skipping...")
             return
 
         vrt_options = gdal.BuildVRTOptions(resampleAlg='lanczos',
@@ -1053,19 +1060,40 @@ class AutoRouteHandler:
         Given a bunch of lists, sort each list so that the filenames match, and create a list of tuples 
         """
         # Get max length of all args
-        max_len = max(len(a) for a in args)
-        args = [sorted(a, key=lambda x: os.path.basename(x) if x is not None else '') for a in args]
+        dems = {os.path.splitext(os.path.basename(f))[0]: f for f in args[0] if f.endswith('.tif') or f.endswith('.vrt')}
+        strms = {os.path.splitext(os.path.basename(f))[0].split('__')[0]: f for f in args[1] if f is not None}
+        lus = {os.path.splitext(os.path.basename(f))[0].split('__')[0]: f for f in args[2] if f is not None}
+        row_col_ids = {os.path.splitext(os.path.basename(f))[0].split('__')[0]: f for f in args[3] if f is not None}
+        flow_ids = {os.path.splitext(os.path.basename(f))[0].split('__')[0]: f for f in args[4] if f is not None}
+        
         output = set({})
-        for i in range(max_len):
-            out_tuple = []
-            for arg in args:
-                if i < len(arg):
-                    out_tuple.append(arg[i])
-                else:
-                    out_tuple.append("")
+        for key, value in  dems.items():
+            out_tuple = [value]
+            if strms.get(key, False):
+                out_tuple.append(strms[key])
+            else:
+                out_tuple.append('')
+
+            if lus.get(key, False):
+                out_tuple.append(lus[key])
+            else:
+                out_tuple.append('')
+
+            if row_col_ids.get(key, False):
+                out_tuple.append(row_col_ids[key])
+            else:
+                out_tuple.append('')
+
+            if flow_ids.get(key, False):
+                out_tuple.append(flow_ids[key])
+            else:
+                out_tuple.append('')
+            
             output.add(tuple(out_tuple))
 
         return output
+
+
     
     def run_autoroute(self, mifn: str) -> None:
         try:
@@ -1077,7 +1105,7 @@ class AutoRouteHandler:
 
             vdt = self.get_item_from_mifn(mifn, key='Print_VDT_Database')
             if vdt and os.path.exists(vdt) and not self.OVERWRITE:
-                logging.info(f"{vdt} already exists. Skipping...")
+                #logging.info(f"{vdt} already exists. Skipping...")
                 return
 
             process = subprocess.run(f'conda activate {self.AUTOROUTE_CONDA_ENV} && echo "a" | {exe} {mifn}', # We echo a dummy input in so that AutoRoute can terminate if some input is wrong
@@ -1097,8 +1125,7 @@ class AutoRouteHandler:
             logging.error(f"Error running AutoRoute: {line}")
         elif process.returncode != 0:
             logging.error(f"Error running AutoRoute: {process.stderr.decode('utf-8')}")
-        else:
-            logging.info('AutoRoute finished')
+
         return process.stdout.decode('utf-8') + process.stderr.decode('utf-8')
 
     def run_floodspreader(self, mifn: str) -> None:
@@ -1118,7 +1145,7 @@ class AutoRouteHandler:
             maps = {fld_map, dep_map, vel_map, wse_map, fs_bathy_file} - {""}
             
             if all(os.path.exists(m) for m in maps) and not self.OVERWRITE:
-                logging.info(f"All maps already exist. Not running FloodSpreader...")
+                #logging.info(f"All maps already exist. Not running FloodSpreader...")
                 return
             # We must remove these maps in order for FloodSpreader to succesfuly run
             {os.remove(m) for m in maps if os.path.exists(m)}
@@ -1128,7 +1155,7 @@ class AutoRouteHandler:
                                      stderr=subprocess.PIPE,
                                      shell=True,)
         except Exception as e:
-            logging.error(f"Error running autoroute: {e}")
+            logging.error(f"Error running floodspreader: {e}")
             return e
 
         line = ''
@@ -1140,9 +1167,8 @@ class AutoRouteHandler:
         if line:
             logging.error(f"Error running FloodSpreader: {line}")
         elif process.returncode != 0:
-            logging.error(f"Error running AutoRoute: {process.stderr.decode('utf-8')}")
-        else:
-            logging.info('FloodSpreader finished')
+            logging.error(f"Error running FloodSpreader: {process.stderr.decode('utf-8')}")
+            
         return process.stdout.decode('utf-8') + process.stderr.decode('utf-8')
     
     def get_item_from_mifn(self, mifn: str, key: str) -> str:
