@@ -103,8 +103,8 @@ if __name__ == '__main__':
                                                         label='Flow Columns',
                                                         #info='Specifies the flow rates that AutoRoute uses. Leave blank to use all columns besides the first one.',
                                                         allow_custom_value=True,
-                                                        multiselect=True,
-                                                        interactive=True)
+                                                        multiselect=False,
+                                                        interactive=True) # Careful
                                 flow_baseflow = gr.Dropdown(value=manager.default("flow_baseflow"),label='Base Flow Column',
                                                         #info='Specifies the base flow rates that AutoRoute uses. Leave blank to not use.',
                                                         allow_custom_value=True,

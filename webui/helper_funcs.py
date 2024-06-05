@@ -4,7 +4,6 @@ import logging
 from typing import Tuple, Dict, List
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-import contextily as ctx
 import pandas as pd
 import geopandas as gpd
 import json
@@ -405,11 +404,15 @@ class ManagerFacade():
         ax.tick_params(left = False, bottom = False)
         ax.xaxis.set_major_locator(ticker.MaxNLocator(nbins=2))
         ax.yaxis.set_major_locator(ticker.MaxNLocator(nbins=2))
-        ctx.add_basemap(ax, 
-                    crs=3857, 
-                    attribution=False, 
-                    source=ctx.providers.Esri.WorldImagery
-                    )
+        try:
+            import contextily as ctx
+            ctx.add_basemap(ax, 
+                        crs=3857, 
+                        attribution=False, 
+                        source=ctx.providers.Esri.WorldImagery
+                        )
+        except ImportError:
+            pass
         
         return fig
         

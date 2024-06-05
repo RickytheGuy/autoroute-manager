@@ -295,7 +295,7 @@ class AutoRouteHandler:
         return tif_files
 
     def is_in_extent(self, 
-                          ds: str | gdal.Dataset,
+                          ds: Any,
                           extent: list = None) -> bool:
         if extent is None:
             return True
@@ -455,7 +455,7 @@ class AutoRouteHandler:
         if self.STREAM_ID == None:
             logging.warning(f"No stream id provided. We will try to assume that the first column is the id. If this is not the case, please provide the stream id.")
         
-        tmp_streams = os.path.join(self.DATA_DIR, 'tmp', f'{os.path.basename(dem).split('.')[0].replace('_buff','')}.{GEOMETRY_SAVE_EXTENSION}')
+        tmp_streams = os.path.join(self.DATA_DIR, 'tmp', f"{os.path.basename(dem).split('.')[0].replace('_buff','')}.{GEOMETRY_SAVE_EXTENSION}")
         try:
             dfs = []
             for f in filenames:
