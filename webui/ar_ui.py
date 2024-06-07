@@ -170,7 +170,7 @@ if __name__ == '__main__':
                                                     interactive=True)
                                 
                                 use_ar_python = gr.Checkbox(value=manager.default("use_ar_python"),
-                                                        label='Use Automated Rating Curve>',
+                                                        label='Use Automated Rating Curve (In Developement, non-functional)',
                                                         info='Use Python for AutoRoute?',
                                                         interactive=True)
                                 
@@ -178,7 +178,7 @@ if __name__ == '__main__':
                                                     placeholder='/User/Desktop/AutoRoute.exe',
                                                     label="AutoRoute Executable",
                                                     info=manager.doc('ar_exe'),
-                                                    visible=False
+                                                    visible=True
                                 )
                                 use_ar_python.change(lambda x: gr.Textbox(visible=not x), inputs=use_ar_python, outputs=ar_exe)
                                 
