@@ -339,7 +339,7 @@ class ManagerFacade():
                   "only_streams": only_streams,
                   "use_ar_top_widths": use_ar_top_widths,
                   "flood_local": flood_local,
-                  "fs_bathy_file": fs_bathy_file,
+                  "fs_bathy_file": self._format_files(fs_bathy_file),
                   "fs_bathy_smooth_method": fs_bathy_smooth_method,
                   "bathy_twd_factor": bathy_twd_factor,
         }
