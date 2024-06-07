@@ -15,6 +15,7 @@ import sys
 import xarray as xr
 
 from osgeo import gdal, ogr
+from git import Repo
 from shapely.geometry import LineString
 from pyproj import Transformer
 try:
@@ -46,6 +47,16 @@ class ManagerFacade():
         self.docs = docs
         self.data = data
         
+        extensions = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'extensions')
+        self.pull_autoroute_py(extensions)
+        # try:
+        from extensions.autoroutepy import Automated_Rating_Curve_Generator
+        # except ImportError:
+        #     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        #     sys.path.append(project_root)
+        #     from extensions.autoroutepy import Automated_Rating_Curve_Generator
+            
+        
     async def run(self, **kwargs):
         await self._run(**kwargs)
 
@@ -74,7 +85,7 @@ class ManagerFacade():
         55. bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,data_dir, minx, 
         60. miny, maxx, maxy, overwrite, buffer, 
         65. crop, vdt_file,  ar_exe, fs_exe, clean_outputs
-        70. buffer_distance
+        70. buffer_distance, use_ar_python, run_ar_bathy
         """
         if len(args) < 69: return
         to_write = [
@@ -149,6 +160,8 @@ class ManagerFacade():
                     "fs_bathy_smooth_method":args[56],
                     "clean_outputs":args[69],
                     "buffer_distance":args[70],
+                    "use_ar_python":args[71],
+                    "run_ar_bathy":args[72]
                 }
             }
         ]
@@ -249,7 +262,7 @@ class ManagerFacade():
                                                     weight_angles, man_n, adjust_flow, bathy_alpha, ar_bathy, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
                                                     specify_depth, twd_factor, only_streams, use_ar_top_widths, flood_local, depth_map, flood_map, velocity_map, wse_map, fs_bathy_file, da_flow_param,
                                                     bathy_method,bathy_x_max_depth, bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,
-                                                    data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file,  ar_exe, fs_exe, clean_outputs, buffer_distance) -> None:
+                                                    data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file,  ar_exe, fs_exe, clean_outputs, buffer_distance, use_ar_python, run_ar_bathy) -> None:
         """
         Write the main input file
         """
@@ -310,6 +323,7 @@ class ManagerFacade():
                   "box_size": box_size,
                   "find_flat": find_flat,
                   "low_spot_find_flat_cutoff": low_spot_find_flat_cutoff,
+                  "run_bathymetry": run_ar_bathy,
                   "ar_bathy_file": self._format_files(ar_bathy),
                   "bathy_alpha": bathy_alpha,
                   "bathy_method": bathy_method,
@@ -416,3 +430,32 @@ class ManagerFacade():
         
         return fig
         
+    def pull_autoroute_py(self,extensions: str) -> None:
+        """
+        Pull the autoroute.py file from the extensions folder
+        """
+        if not os.path.exists(extensions):
+            os.makedirs(extensions)
+            
+        git_folder = os.path.join(extensions, 'automated-rating-curve-byu')
+        import_folder = os.path.join(extensions, 'autoroutepy')
+        if not os.path.exists(import_folder):
+            try:
+                Repo.clone_from('https://github.com/RickytheGuy/automated-rating-curve-byu.git', import_folder)
+                # Rename the folder
+                os.rename(os.path.join(extensions, 'automated-rating-curve-byu'), import_folder)
+                return
+            except Exception as e:
+                gr.Warning(f"Could not clone the automated rating curve repository: {e}")
+                
+        repo = Repo(import_folder)
+        if repo.bare:
+            gr.Warning("The automated rating curve repository is empty")
+            return
+        
+        try:
+            repo.remotes.origin.pull()
+        except Exception as e:
+            gr.Warning(f"Could not pull the automated rating curve repository: {e}")
+            
+                

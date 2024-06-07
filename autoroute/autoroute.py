@@ -96,7 +96,7 @@ class AutoRouteHandler:
             else:
                 logging.error("No stream network folder or stream name provided. Exiting...")
                 return
-            #strms = [strm for strm in strms if strm]
+            
             n_strms = len({strm for strm in strms if strm})
             if n_strms != n_dems:
                 logging.warning(f"Only {n_strms} stream files were created out of {n_dems} DEMs")
@@ -105,41 +105,34 @@ class AutoRouteHandler:
                 logging.info(f"Creating land use rasters for {n_dems} DEM(s)...")
                 lus = list(tqdm.tqdm(pool.imap_unordered(self.create_land_use, dems), total=len(dems)))
 
-            # strms = glob.glob(os.path.join(self.DATA_DIR, 'stream_files', f"{self.DEM_NAME}__{self.STREAM_NAME}","*.tif"))
             if not self.DEM_FOLDER and self.EXTENT:
                 strms = {strm for strm in strms if self.is_in_extent(strm, self.EXTENT)}
             if strms and self.SIMULATION_FLOWFILE:
-                #logging.info(f"Creating row col id files for {n_strms} Stream Raster(s)...")
                 sim_flow_files =list(tqdm.tqdm( pool.imap_unordered(self.create_row_col_id_file, strms), total=len(strms),desc='Creating row col id files'))
                 if self.multiprocess_data.get('SIMULATION_ID_COLUMN', False):
                     self.SIMULATION_ID_COLUMN = self.multiprocess_data['SIMULATION_ID_COLUMN']
 
             if self.FLOOD_FLOWFILE:
-                #logging.info(f"Creating flood flow files for {n_strms} Stream Raster(s)...")
                 flood_files =list(tqdm.tqdm( pool.imap_unordered(self.create_flood_flowfile, strms), total=len(strms),desc='Creating flow files'))
             
             pairs = self._zip_files(dems, strms, lus, sim_flow_files, flood_files)
             if self.AUTOROUTE or self.FLOODSPREADER:
-                logging.info(f"Creating mifn files for {n_dems} DEM(s)...")
                 mifns = pool.starmap(self.create_mifn_file, pairs)
                 mifns = [mifn for mifn in mifns if mifn]
                 if len(mifns) != n_dems:
                     logging.warning(f"Only {len(mifns)} mifn files were created out of {n_dems} DEMs")
 
             if self.AUTOROUTE:
-                #logging.info(f"Running AutoRoute on {len(mifns)} DEM(s)...")
                 set(tqdm.tqdm(pool.imap_unordered(self.run_autoroute, mifns), total=len(mifns), desc="Running AutoRoute"))
 
             if self.FLOODSPREADER:
                 if not self.FLOOD_FLOWFILE:
                     logging.warning("FloodSpreader requires a flood flow file. Will not run...")
                 else:
-                    #logging.info(f"Running FloodSpreader on {len(mifns)} input files...")
                     set(tqdm.tqdm(pool.imap_unordered(self.run_floodspreader, mifns), total=len(mifns), desc='Running FloodSpreader'))
                     logging.info('FloodSpreader finished')
 
             if self.CLEAN_OUTPUTS:
-                #logging.info(f"Optimizing outputs for {len(mifns)} input files...")
                 set(tqdm.tqdm(pool.imap_unordered(self.optimize_outputs, mifns), total=len(mifns), desc="Optimizing outputs"))
 
             logging.info("Finished processing all inputs\n")
@@ -228,6 +221,7 @@ class AutoRouteHandler:
         self.box_size = 1
         self.find_flat = False
         self.low_spot_find_flat_cutoff = float('inf')
+        self.run_bathymetry = False
         self.ar_bathy_file = ''
         self.bathy_alpha = 0.001
         self.bathy_method = ''
@@ -281,6 +275,7 @@ class AutoRouteHandler:
         os.makedirs(os.path.join(self.DATA_DIR,'stream_reference_files'), exist_ok=True)
         os.makedirs(os.path.join(self.DATA_DIR,'tmp'), exist_ok=True)
         os.makedirs(os.path.join(self.DATA_DIR, 'meta_files'), exist_ok=True)
+        os.makedirs(os.path.join(self.DATA_DIR, 'bathymetry'), exist_ok=True)
 
     def find_dems_in_extent(self, 
                             extent: list = None) -> List[str]:
@@ -914,14 +909,20 @@ class AutoRouteHandler:
                 if self.low_spot_find_flat_cutoff < float('inf'):
                     self._write(f,'Low_Spot_Range_FlowCutoff',self.low_spot_find_flat_cutoff)
 
-            if self.ar_bathy_file:
-                if not os.path.isabs(self.ar_bathy_file):
-                    self.ar_bathy_file = os.path.abspath(self.ar_bathy_file)
-                os.makedirs(self.ar_bathy_file, exist_ok=True)
-                bathy_file = os.path.join(self.ar_bathy_file, f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__ar_bathy.tif")
+            if self.run_bathymetry:
+                self._write(f,'Bathymetry')
+                if self.ar_bathy_file:
+                    if not os.path.isabs(self.ar_bathy_file):
+                        self.ar_bathy_file = os.path.abspath(self.ar_bathy_file)
+                    os.makedirs(self.ar_bathy_file, exist_ok=True)
+                    bathy_file = os.path.join(self.ar_bathy_file, f"{os.path.basename(dem).split('.')[0]}__ar_bathy.tif")
+                else:
+                    bathy_file = os.path.join(self.DATA_DIR, 'bathymetry', f"{self.DEM_NAME}__{self.STREAM_NAME}")
+                    os.makedirs(bathy_file, exist_ok=True)
+                    bathy_file = os.path.join(bathy_file, f"{os.path.basename(dem).split('.')[0]}__ar_bathy.tif")
                 self._write(f,'BATHY_Out_File',bathy_file)
                 self._write(f,'Bathymetry_Alpha',self.bathy_alpha)
-                self._write(f,'Bathymetry')
+                
 
                 if self.bathy_method == 'Parabolic':
                     self._write(f,'Bathymetry_Method',0)
@@ -942,7 +943,7 @@ class AutoRouteHandler:
                     self._write(f,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
                 else: self._write(f,'Bathymetry_Method', 5)
 
-                if self.da_flow_param: self._write(f, 'RAPID_DA_or_Flow_Param',self.da_flow_param)
+            if self.da_flow_param: self._write(f, 'RAPID_DA_or_Flow_Param',self.da_flow_param)
 
             f.write('\n')
             self._write(f,'# FloodSpreader Inputs')
@@ -1018,12 +1019,11 @@ class AutoRouteHandler:
                     self._check_type('WSE Map',wse_map,['.tif'])
                     self._write(f,'OutWSE',wse_map)
 
-            if self.fs_bathy_file and self.ar_bathy_file: 
+            if self.run_bathymetry and self.fs_bathy_file: 
                 os.makedirs(self.fs_bathy_file, exist_ok=True)
                 if not os.path.isabs(self.fs_bathy_file):
                     self.fs_bathy_file = os.path.abspath(self.fs_bathy_file)
-                fs_bathy_file = os.path.join(self._format_files(self.fs_bathy_file), f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__fs_bathy.tif")
-                self._check_type('FloodSpreader Generated Bathymetry',fs_bathy_file,['.tif'])
+                fs_bathy_file = os.path.join(self._format_files(self.fs_bathy_file), f"{os.path.basename(dem).split('.')[0]}__fs_bathy.tif")
                 self._write(f,'FSOutBATHY', fs_bathy_file)
                 if self.fs_bathy_smooth_method == 'Linear Interpolation':
                     self._write(f,'Bathy_LinearInterpolation')
@@ -1201,7 +1201,9 @@ class AutoRouteHandler:
             dep_map = self.get_item_from_mifn(mifn, key='OutDEP')
             vel_map = self.get_item_from_mifn(mifn, key='OutVEL')
             wse_map = self.get_item_from_mifn(mifn, key='OutWSE')
-            maps = {fld_map, dep_map, vel_map, wse_map} - {""}
+            fs_bathy = self.get_item_from_mifn(mifn, key='FSOutBATHY')
+            ar_bathy = self.get_item_from_mifn(mifn, key='BATHY_Out_File')
+            maps = {fld_map, dep_map, vel_map, wse_map, fs_bathy, ar_bathy} - {""}
             for m in maps:
                 if os.path.exists(m):
                     ds = gdal.Open(m)
@@ -1217,7 +1219,7 @@ class AutoRouteHandler:
                     else:
                         type = gdal.GDT_Float32
                         predictor = 3
-                        if 'wse' in os.path.basename(m):
+                        if 'wse' in os.path.basename(m) or 'bathy' in os.path.basename(m):
                             noData = -9999
 
                     # Delete the file and resave
