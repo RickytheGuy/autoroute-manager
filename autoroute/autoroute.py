@@ -5,7 +5,7 @@ import math
 import re
 import glob
 import multiprocessing
-from typing import Tuple, Any, List, Set
+from typing import Tuple, Any, List, Set, Callable, Union
 import tqdm
 import subprocess
 import asyncio
@@ -137,7 +137,7 @@ class AutoRouteHandler:
 
             logging.info("Finished processing all inputs\n")
  
-    def setup(self, yaml_file) -> None:
+    def setup(self, yaml_file: Union[dict, str]) -> None:
         """
         Ensure working folder exists and set up. Each folder contains a folder based on the type of dem used and the stream network
         DATA_DIR
@@ -179,7 +179,7 @@ class AutoRouteHandler:
         self.STREAM_NETWORK_FOLDER = ""
         self.LAND_USE_FOLDER = "" 
         self.SIMULATION_FLOWFILE = ""
-        self.FLOOD_FLOWFILE = ""
+        self.FLOOD_FLOWFILE: Callable = None
         self.SIMULATION_ID_COLUMN = ""
         self.SIMULATION_FLOW_COLUMN = ""
         self.EXTENT = None
@@ -193,6 +193,7 @@ class AutoRouteHandler:
         self.CLEAN_OUTPUTS = False
         self.multiprocess_data = multiprocessing.Manager().dict()
 
+        self.AUTOROUTE_PYTHON_MAIN: Callable = "" # Hidden
         self.AUTOROUTE = ""
         self.FLOODSPREADER = ""
         self.AUTOROUTE_CONDA_ENV = ""
@@ -276,6 +277,7 @@ class AutoRouteHandler:
         os.makedirs(os.path.join(self.DATA_DIR,'tmp'), exist_ok=True)
         os.makedirs(os.path.join(self.DATA_DIR, 'meta_files'), exist_ok=True)
         os.makedirs(os.path.join(self.DATA_DIR, 'bathymetry'), exist_ok=True)
+        os.makedirs(os.path.join(self.DATA_DIR, 'curves'), exist_ok=True)
 
     def find_dems_in_extent(self, 
                             extent: list = None) -> List[str]:
@@ -402,7 +404,7 @@ class AutoRouteHandler:
         Reads .parquet, .shp, .gpkg, and potentially others and returns in a way we expect.
         """
         global GPD_ENGINE
-        if None in columns or [] in columns:
+        if columns and None in columns or [] in columns:
             # Stream id was never specified, so we assume that the id is the first entry in the file
             columns = None
             
@@ -824,13 +826,19 @@ class AutoRouteHandler:
                 rapid_flow_file = self._format_files(rapid_flow_file)
                 self._warn_DNE('Flow File', rapid_flow_file)
                 self._check_type('Flow File', rapid_flow_file, ['.txt'])
-                self._write(f,'Flow_RAPIDFile',rapid_flow_file)
+                if self.AUTOROUTE_PYTHON_MAIN:
+                    self._write(f,'Flow_File',rapid_flow_file)
+                else:
+                    self._write(f,'Flow_RAPIDFile',rapid_flow_file)
 
                 self._write(f,'RowCol_From_RAPIDFile')
                 if not self.SIMULATION_ID_COLUMN:
                     logging.warning('Flow ID is not specified!!')
                 else:
-                    self._write(f,'RAPID_Flow_ID', self.SIMULATION_ID_COLUMN)
+                    if self.AUTOROUTE_PYTHON_MAIN:
+                        self._write(f,'Flow_File_ID',self.SIMULATION_ID_COLUMN)
+                    else:
+                        self._write(f,'RAPID_Flow_ID', self.SIMULATION_ID_COLUMN)
                 if not self.SIMULATION_FLOW_COLUMN:
                     logging.warning('Flow Params are not specified!!')
                 else:
@@ -841,7 +849,10 @@ class AutoRouteHandler:
                     if not self.BASE_FLOW_COLUMN:
                         logging.warning('Base Flow Parameter is not specified, not subtracting baseflow')
                     else:
-                        self._write(f,'RAPID_BaseFlow_Param',self.BASE_FLOW_COLUMN)
+                        if self.AUTOROUTE_PYTHON_MAIN:
+                            self._write(f,'Flow_File_BF',self.BASE_FLOW_COLUMN)
+                        else:
+                            self._write(f,'RAPID_BaseFlow_Param',self.BASE_FLOW_COLUMN)
                         self._write(f,'RAPID_Subtract_BaseFlow')
 
             if self.VDT:
@@ -852,6 +863,13 @@ class AutoRouteHandler:
                 vdt = os.path.join(self.DATA_DIR, 'vdts', f"{self.DEM_NAME}__{self.STREAM_NAME}")
                 os.makedirs(vdt, exist_ok=True)
                 vdt = os.path.join(vdt, f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__vdt.txt")
+            if self.AUTOROUTE_PYTHON_MAIN:
+                if self.VDT:
+                    curve_file = os.path.join(self._format_files(self.VDT), f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__curve.txt")
+                else:
+                    curve_file = os.path.join(self.DATA_DIR, 'curves', f"{self.DEM_NAME}__{self.STREAM_NAME}", f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__curve.txt")
+                self._write(f,'Print_Curve_File',curve_file)    
+                
             self._write(f,'Print_VDT_Database',vdt)
             self._write(f,'Print_VDT_Database_NumIterations',self.num_iterations)
 
@@ -1097,6 +1115,10 @@ class AutoRouteHandler:
     
     def run_autoroute(self, mifn: str) -> None:
         try:
+            if self.AUTOROUTE_PYTHON_MAIN:
+                self.AUTOROUTE_PYTHON_MAIN(mifn)
+                return
+            
             exe = self._format_files(self.AUTOROUTE.strip())
             if not os.path.exists(exe):
                 logging.error(f"AutoRoute executable not found: {exe}")
@@ -1112,21 +1134,22 @@ class AutoRouteHandler:
                                      stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE,
                                      shell=True,)
+            line = ''
+            for l in process.stdout.decode('utf-8').splitlines():
+                if 'error' in l.lower() and not any({'Perimeter' in l, 'Area' in l,  'Finder' in l}) or 'PROBLEMS' in l:
+                    line = l + process.stderr.decode('utf-8')
+                    break
+                
+            if line:
+                logging.error(f"Error running AutoRoute: {line}")
+            elif process.returncode != 0:
+                logging.error(f"Error running AutoRoute: {process.stderr.decode('utf-8')}")
+
+            return process.stdout.decode('utf-8') + process.stderr.decode('utf-8')
         except Exception as e:
             logging.error(f"Error running autoroute: {e}")
 
-        line = ''
-        for l in process.stdout.decode('utf-8').splitlines():
-            if 'error' in l.lower() and not any({'Perimeter' in l, 'Area' in l,  'Finder' in l}) or 'PROBLEMS' in l:
-                line = l + process.stderr.decode('utf-8')
-                break
-            
-        if line:
-            logging.error(f"Error running AutoRoute: {line}")
-        elif process.returncode != 0:
-            logging.error(f"Error running AutoRoute: {process.stderr.decode('utf-8')}")
-
-        return process.stdout.decode('utf-8') + process.stderr.decode('utf-8')
+        
 
     def run_floodspreader(self, mifn: str) -> None:
         try:

@@ -12,9 +12,12 @@ import asyncio
 import re
 import glob
 import sys
+import multiprocessing
 import xarray as xr
+import numpy as np
 
 from osgeo import gdal, ogr
+from shapely.geometry import box
 from git import Repo
 from shapely.geometry import LineString
 from pyproj import Transformer
@@ -49,13 +52,9 @@ class ManagerFacade():
         
         extensions = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'extensions')
         self.pull_autoroute_py(extensions)
-        # try:
         from extensions.autoroutepy import Automated_Rating_Curve_Generator
-        # except ImportError:
-        #     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-        #     sys.path.append(project_root)
-        #     from extensions.autoroutepy import Automated_Rating_Curve_Generator
-            
+        self.autoroutepy = Automated_Rating_Curve_Generator.main
+
         
     async def run(self, **kwargs):
         await self._run(**kwargs)
@@ -65,6 +64,61 @@ class ManagerFacade():
     
     def default(self, key: str) -> str:
         return self.data.get(key, None)
+    
+    def get_ids(self, *args) -> None:
+        logging.info("Getting IDs...")
+        dem = args[0]
+        strm_lines = args[1]
+        minx = args[2]
+        miny = args[3]
+        maxx = args[4]
+        maxy = args[5]
+        ids_folder = args[6]
+        flow_id = args[7]
+        
+        if os.path.isdir(strm_lines):
+            stream_files = [os.path.join(strm_lines,f) for f in os.listdir(strm_lines) if f.endswith(('.shp', '.gpkg', '.parquet', '.geoparquet'))]
+        elif os.path.isfile(strm_lines):
+            stream_files = [strm_lines]
+        else:
+            msg = f"{strm_lines} is not a valid file or folder"
+            logging.error(msg)
+            gr.Error(msg)
+            return
+        
+        if os.path.isdir(ids_folder):
+            output_file = os.path.join(ids_folder, 'ids.csv')
+        else:
+            output_file = ids_folder
+        num_processes = min(os.cpu_count(), len(stream_files))
+        with multiprocessing.Pool(num_processes) as pool:
+            try:
+                results = pool.starmap(self._get_ids, [(f, [minx, miny, maxx, maxy], flow_id) for f in stream_files])
+            except ValueError:
+                msg = f"{flow_id !r} is not a valid field in the stream files provided"
+                logging.error(msg)
+                gr.Error(msg)
+                return
+        if len(results) == 0:
+            msg = "No IDs found in the stream files provided"
+            logging.error(msg)
+            gr.Error(msg)
+            return
+        if len(results) == 1:
+            results = np.unique(results[0])
+        else:
+            results = np.unique(np.concatenate(results, axis=None))
+        pd.DataFrame({flow_id: results}).to_csv(output_file, index=False)
+        msg = f"IDs saved to {output_file}"
+        logging.info(msg)
+        gr.Info(msg)
+        
+        
+    def _get_ids(self, strm_lines: str, extent: List[float], id_field: str) -> np.ndarray:
+        bbox = box(extent[0], extent[1], extent[2], extent[3])
+        gdf = self.manager.gpd_read(strm_lines, columns=[id_field], bbox=bbox)
+        return gdf[id_field].to_numpy().astype(int)
+        
     
     def save(self, *args) -> None:
         """
@@ -294,7 +348,8 @@ class ManagerFacade():
                   "VELOCITY_MAP": self._format_files(velocity_map),
                   "WSE_MAP": self._format_files(wse_map),
                   "CLEAN_OUTPUTS": clean_outputs,
-
+                  
+                  "AUTOROUTE_PYTHON_MAIN": self.autoroutepy,
                   "AUTOROUTE": self._format_files(ar_exe),
                   "FLOODSPREADER": self._format_files(fs_exe),
                   "AUTOROUTE_CONDA_ENV": "autoroute",
@@ -345,7 +400,7 @@ class ManagerFacade():
         }
         self.manager.setup(params)
         self.manager.run()
-        gr.Info("DONE!")
+        gr.Info("Finished!")
         
     def _prepare_exe(self,exe: str) -> str:
         if SYSTEM == "Windows":
@@ -437,22 +492,15 @@ class ManagerFacade():
         if not os.path.exists(extensions):
             os.makedirs(extensions)
             
-        git_folder = os.path.join(extensions, 'automated-rating-curve-byu')
         import_folder = os.path.join(extensions, 'autoroutepy')
         if not os.path.exists(import_folder):
             try:
                 Repo.clone_from('https://github.com/RickytheGuy/automated-rating-curve-byu.git', import_folder)
-                # Rename the folder
-                os.rename(os.path.join(extensions, 'automated-rating-curve-byu'), import_folder)
-                return
             except Exception as e:
                 gr.Warning(f"Could not clone the automated rating curve repository: {e}")
+            return
                 
         repo = Repo(import_folder)
-        if repo.bare:
-            gr.Warning("The automated rating curve repository is empty")
-            return
-        
         try:
             repo.remotes.origin.pull()
         except Exception as e:

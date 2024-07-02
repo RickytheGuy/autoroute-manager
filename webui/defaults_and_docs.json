@@ -126,7 +126,9 @@
                 "None"
             ],
             "clean_outputs": false,
-            "buffer_distance": 0.15
+            "buffer_distance": 0.15,
+            "use_ar_python": false,
+            "run_ar_bathy": false
         }
     }
 ]

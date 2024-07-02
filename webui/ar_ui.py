@@ -170,7 +170,7 @@ if __name__ == '__main__':
                                                     interactive=True)
                                 
                                 use_ar_python = gr.Checkbox(value=manager.default("use_ar_python"),
-                                                        label='Use Automated Rating Curve (In Developement, non-functional)',
+                                                        label='Use Automated Rating Curve',
                                                         info='Use Python for AutoRoute?',
                                                         interactive=True)
                                 
@@ -188,6 +188,9 @@ if __name__ == '__main__':
                                                     label="FloodSpreader Executable",
                                                     info=manager.doc('fs_exe')
                                 )
+                                ids_folder = gr.Textbox(value='',
+                                                        placeholder='/User/Desktop/ids.txt',
+                                                        label='IDs Folder (optional)',)
 
                             with gr.Column():
                                 depth_map = gr.Textbox(value=manager.default("out_depth"),
@@ -213,6 +216,7 @@ if __name__ == '__main__':
 
                                 run_button = gr.Button("Run Model", variant='primary')
                                 save_button = gr.Button("Save Parameters")
+                                get_ids_button = gr.Button("Get IDs from Inputs Given", variant='secondary')
                       
                 gr.Markdown('## Inputs - Optional')  
                 with gr.Row():
@@ -484,6 +488,7 @@ if __name__ == '__main__':
                     logging.error(e)
                                                 
                 save_button.click(fn=manager.save, inputs=inputs, outputs=[])
+                get_ids_button.click(fn=manager.get_ids, inputs=[dem, strm_lines, minx, miny, maxx, maxy, ids_folder, flow_id], outputs=[])
 
             with gr.TabItem('File Preprocessing'):
                 pass
