@@ -194,6 +194,7 @@ class AutoRouteHandler:
         self.multiprocess_data = multiprocessing.Manager().dict()
 
         self.AUTOROUTE_PYTHON_MAIN: Callable = "" # Hidden
+        self.USE_PYTHON = False
         self.AUTOROUTE = ""
         self.FLOODSPREADER = ""
         self.AUTOROUTE_CONDA_ENV = ""
@@ -407,6 +408,8 @@ class AutoRouteHandler:
         if columns and None in columns or [] in columns:
             # Stream id was never specified, so we assume that the id is the first entry in the file
             columns = None
+        elif 'geometry' not in columns:
+            columns.append('geometry')
             
         if path.endswith((".parquet", ".geoparquet")):
             if columns:
@@ -826,7 +829,7 @@ class AutoRouteHandler:
                 rapid_flow_file = self._format_files(rapid_flow_file)
                 self._warn_DNE('Flow File', rapid_flow_file)
                 self._check_type('Flow File', rapid_flow_file, ['.txt'])
-                if self.AUTOROUTE_PYTHON_MAIN:
+                if self.USE_PYTHON:
                     self._write(f,'Flow_File',rapid_flow_file)
                 else:
                     self._write(f,'Flow_RAPIDFile',rapid_flow_file)
@@ -835,7 +838,7 @@ class AutoRouteHandler:
                 if not self.SIMULATION_ID_COLUMN:
                     logging.warning('Flow ID is not specified!!')
                 else:
-                    if self.AUTOROUTE_PYTHON_MAIN:
+                    if self.USE_PYTHON:
                         self._write(f,'Flow_File_ID',self.SIMULATION_ID_COLUMN)
                     else:
                         self._write(f,'RAPID_Flow_ID', self.SIMULATION_ID_COLUMN)
@@ -849,7 +852,7 @@ class AutoRouteHandler:
                     if not self.BASE_FLOW_COLUMN:
                         logging.warning('Base Flow Parameter is not specified, not subtracting baseflow')
                     else:
-                        if self.AUTOROUTE_PYTHON_MAIN:
+                        if self.USE_PYTHON:
                             self._write(f,'Flow_File_BF',self.BASE_FLOW_COLUMN)
                         else:
                             self._write(f,'RAPID_BaseFlow_Param',self.BASE_FLOW_COLUMN)
@@ -863,7 +866,7 @@ class AutoRouteHandler:
                 vdt = os.path.join(self.DATA_DIR, 'vdts', f"{self.DEM_NAME}__{self.STREAM_NAME}")
                 os.makedirs(vdt, exist_ok=True)
                 vdt = os.path.join(vdt, f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__vdt.txt")
-            if self.AUTOROUTE_PYTHON_MAIN:
+            if self.USE_PYTHON:
                 if self.VDT:
                     curve_file = os.path.join(self._format_files(self.VDT), f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__curve.txt")
                 else:
@@ -1115,8 +1118,13 @@ class AutoRouteHandler:
     
     def run_autoroute(self, mifn: str) -> None:
         try:
-            if self.AUTOROUTE_PYTHON_MAIN:
-                self.AUTOROUTE_PYTHON_MAIN(mifn)
+            if self.USE_PYTHON:
+                try:
+                    self.AUTOROUTE_PYTHON_MAIN(mifn)
+                except Exception as e:
+                    msg = f'Error running AutoRoutePy'
+                    logging.error(msg)
+                    raise e
                 return
             
             exe = self._format_files(self.AUTOROUTE.strip())
