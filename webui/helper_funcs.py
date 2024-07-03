@@ -68,12 +68,12 @@ class ManagerFacade():
     def get_ids(self, *args) -> None:
         logging.info("Getting IDs...")
         dem = args[0]
-        strm_lines = args[1]
+        strm_lines = self._format_files(args[1])
         minx = args[2]
         miny = args[3]
         maxx = args[4]
         maxy = args[5]
-        ids_folder = args[6]
+        ids_folder = self._format_files(args[6])
         flow_id = args[7]
         
         if os.path.isdir(strm_lines):
