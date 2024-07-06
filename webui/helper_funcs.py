@@ -15,7 +15,7 @@ import sys
 import multiprocessing
 import xarray as xr
 import numpy as np
-
+import fiona
 from osgeo import gdal, ogr
 from shapely.geometry import box
 from git import Repo
@@ -114,9 +114,23 @@ class ManagerFacade():
         gr.Info(msg)
         
         
-    def _get_ids(self, strm_lines: str, extent: List[float], id_field: str) -> np.ndarray:
-        bbox = box(extent[0], extent[1], extent[2], extent[3])
-        gdf = self.manager.gpd_read(strm_lines, columns=[id_field], bbox=bbox)
+    def _get_ids(self, strm_file: str, extent: List[float], id_field: str) -> np.ndarray:
+        with fiona.open(strm_file, 'r') as src:
+                crs = src.crs
+                f_extent = box(*src.bounds)
+        if crs.to_epsg() != 4326:
+            transformer = Transformer.from_crs("EPSG:4326",crs.to_string(), always_xy=True) 
+            minx2, miny2 = transformer.transform(extent[0], extent[1])
+            maxx2, maxy2 =  transformer.transform(extent[2], extent[3])
+            bbox = box(minx2, miny2, maxx2, maxy2)
+        else:
+            bbox = box(*extent)
+        if not f_extent.intersects(bbox):
+            return np.array([])
+
+        gdf = self.manager.gpd_read(strm_file, columns=[id_field], bbox=bbox)
+        if not gdf.empty:
+            pass
         return gdf[id_field].to_numpy().astype(int)
         
     
@@ -350,6 +364,7 @@ class ManagerFacade():
                   "CLEAN_OUTPUTS": clean_outputs,
                   
                   "AUTOROUTE_PYTHON_MAIN": self.autoroutepy,
+                  "USE_PYTHON": use_ar_python,
                   "AUTOROUTE": self._format_files(ar_exe),
                   "FLOODSPREADER": self._format_files(fs_exe),
                   "AUTOROUTE_CONDA_ENV": "autoroute",
