@@ -521,3 +521,67 @@ class ManagerFacade():
         except Exception as e:
             gr.Warning(f"Could not pull the automated rating curve repository: {e}")
                
+    def get_forecast(self, input_path: str, output_path: str, date: str, ensemble: str) -> None:
+        try:
+            import geoglows
+        except ImportError:
+            msg = "Please install the geoglows package to use this function. Run 'conda install geoglows' in your terminal."
+            logging.error(msg)
+            gr.Error(msg)
+            return
+        
+        if not os.path.exists(input_path):
+            msg = f"{input_path} does not exist"
+            logging.error(msg)
+            gr.Error(msg)
+            return
+        
+        if not output_path:
+            msg = "No output path specified"
+            logging.error(msg)
+            gr.Error(msg)
+            return
+        
+        if not ensemble:
+            msg = "No ensemble specified"
+            logging.error(msg)
+            gr.Error(msg)
+            return
+        
+        if not date or not re.match(r'\d{4}\d{2}\d{2}', date):
+            msg = "Invalid date format. Please use the format 'YYYYMMDD'"
+            logging.error(msg)
+            gr.Error(msg)
+            return
+        
+        # Check if the file has a header or not
+        with open(input_path, 'r') as f:
+            first_line = f.readline()
+        if first_line[0].isdigit():
+            header = None
+        else:
+            header = 0
+        
+        # Read the CSV file
+        df = pd.read_csv(input_path, header=header)
+        
+        # Save the first column as a list of IDs and remove duplicates
+        ids = df.iloc[:,0].values
+        
+        forecast_data = geoglows.data.forecast_ensembles(ids, date=date)
+        
+        #reset the index
+        forecast_data.reset_index(inplace=True)
+        forecast_data = forecast_data[['time','river_id',ensemble]]
+        max_rows: pd.DataFrame = forecast_data.loc[forecast_data.groupby('river_id')[ensemble].idxmax()]
+    
+        max_rows.drop(columns=['time'], inplace=True)
+        
+        # Reset the index
+        max_rows.reset_index(drop=True, inplace=True)
+        
+        # Rename the 'ensemble_52' column to 'max_forecast'
+        max_rows.rename(columns={ensemble: 'max_forecast'}, inplace=True)
+        max_rows.rename(columns={'river_id': 'LINKNO'}, inplace=True)
+        
+        max_rows.to_csv(output_path, index=False)
