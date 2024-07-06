@@ -1,8 +1,8 @@
 import logging
-import sys
+import hashlib
 import os
 import math
-import re
+import json
 import glob
 import multiprocessing
 from typing import Tuple, Any, List, Set, Callable, Union
@@ -19,6 +19,8 @@ import yaml
 from osgeo import gdal, osr
 from shapely.geometry import box
 from pyproj import Transformer
+
+from thread_dict import ThreadSafeDict
 
 # GDAL setups
 os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = 'TRUE' # Set to avoid reading really large folders
@@ -37,6 +39,13 @@ if gdal.GetDriverByName("Parquet") is not None:
     GEOMETRY_SAVE_EXTENSION = "parquet"
 else:
     GEOMETRY_SAVE_EXTENSION = "gpkg"
+    
+# Load existing metadata
+metadata_file = '.file_metadata.json'
+file_hash_dict = ThreadSafeDict()
+if os.path.exists(metadata_file):
+    with open(metadata_file, 'r') as f:
+        file_hash_dict.data = json.load(f)
 
 
 class AutoRouteHandler:
@@ -357,7 +366,7 @@ class AutoRouteHandler:
 
         os.makedirs(os.path.join(self.DATA_DIR, 'dems',self.DEM_NAME + "__buffered"), exist_ok=True)
         buffered_dem = os.path.join(self.DATA_DIR, 'dems',self.DEM_NAME + "__buffered", self.create_fname(minx, miny, maxx, maxy, append='_buff'))
-        if not self.OVERWRITE and os.path.exists(buffered_dem):
+        if os.path.exists(buffered_dem) and not self.OVERWRITE and self.hash_match(buffered_dem):
             return buffered_dem
 
         dems = self.find_dems_in_extent(extent=(minx, miny, maxx, maxy))
@@ -370,6 +379,7 @@ class AutoRouteHandler:
                                             srcNodata=no_data_value,
                                             outputBounds=(minx, miny, maxx, maxy))
         gdal.BuildVRT(buffered_dem, dems, options=vrt_options)
+        self.update_hash(buffered_dem)
         return buffered_dem
         
     def _sizeof_fmt(self, num:int) -> str:
@@ -938,7 +948,10 @@ class AutoRouteHandler:
                     bathy_file = os.path.join(self.DATA_DIR, 'bathymetry', f"{self.DEM_NAME}__{self.STREAM_NAME}")
                     os.makedirs(bathy_file, exist_ok=True)
                     bathy_file = os.path.join(bathy_file, f"{os.path.basename(dem).split('.')[0]}__ar_bathy.tif")
-                self._write(f,'BATHY_Out_File',bathy_file)
+                if self.AUTOROUTE_PYTHON_MAIN:
+                    self._write(f,'BATHY_Out_File',bathy_file)
+                else:
+                    self._write(f,'BATHY_Out_File',bathy_file)
                 self._write(f,'Bathymetry_Alpha',self.bathy_alpha)
                 
 
@@ -1292,3 +1305,15 @@ class AutoRouteHandler:
         output += str(round(abs(maxx), 3)).replace('.','_') + append + _type
         return output
 
+    def _hash(file_path: str) -> str:
+        hasher = hashlib.md5()
+        with open(file_path, 'rb') as f:
+            hasher.update(f.read())
+        return hasher.hexdigest()
+    
+    def hash_match(self, file: str) -> bool:
+        return self._hash(file) == file_hash_dict.get(file, '')
+    
+    def update_hash(self, file: str) -> None:
+        file_hash_dict[file] = self._hash(file)
+      
