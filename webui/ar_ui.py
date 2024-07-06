@@ -116,11 +116,6 @@ if __name__ == '__main__':
                                 )
 
                             with gr.Row():
-                                overwrite = gr.Checkbox(value=manager.default("overwrite"),
-                                                        label='Overwrite',
-                                                            #info='Overwrite existing files?',
-                                                            interactive=True)
-                                
                                 crop = gr.Checkbox(value=manager.default("crop"),
                                                 label='Crop',
                                                     info='Crop output to extent?',
@@ -479,7 +474,7 @@ if __name__ == '__main__':
                                                         weight_angles, man_n, adjust_flow, bathy_alpha, ar_bathy_out_file, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
                                                         specify_depth, twd_factor, only_streams, use_ar_top_widths, flood_local, depth_map, flood_map, velocity_map, wse_map, fs_bathy_file, da_flow_param,
                                                         bathy_method,bathy_x_max_depth, bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,
-                                                        data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file, ar_exe, fs_exe, clean_outputs, buffer_distance,
+                                                        data_dir, minx, miny, maxx, maxy, False, buffer, crop, vdt_file, ar_exe, fs_exe, clean_outputs, buffer_distance,
                                                         use_ar_python, run_ar_bathy]
                 try:
                     run_button.click(fn=manager._run, inputs=inputs, outputs=[])

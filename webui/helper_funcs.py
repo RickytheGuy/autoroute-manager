@@ -10,7 +10,7 @@ import json
 import platform
 import asyncio
 import re
-import glob
+import threading
 import sys
 import multiprocessing
 import xarray as xr
@@ -94,7 +94,7 @@ class ManagerFacade():
         with multiprocessing.Pool(num_processes) as pool:
             try:
                 results = pool.starmap(self._get_ids, [(f, [minx, miny, maxx, maxy], flow_id) for f in stream_files])
-            except ValueError:
+            except KeyError:
                 msg = f"{flow_id !r} is not a valid field in the stream files provided"
                 logging.error(msg)
                 gr.Error(msg)
@@ -520,5 +520,4 @@ class ManagerFacade():
             repo.remotes.origin.pull()
         except Exception as e:
             gr.Warning(f"Could not pull the automated rating curve repository: {e}")
-            
-                
+               
