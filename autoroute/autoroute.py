@@ -1,24 +1,31 @@
 import logging
-import sys
+import hashlib
 import os
 import math
-import re
 import glob
 import multiprocessing
 from typing import Tuple, Any, List, Set, Callable, Union
-import tqdm
 import subprocess
 import asyncio
+import atexit
 
+import fiona
+import yaml
+import tqdm
 import geopandas as gpd
 import pandas as pd
 import numpy as np
-import xarray as xr
-import fiona
-import yaml
 from osgeo import gdal, osr
 from shapely.geometry import box
 from pyproj import Transformer
+
+# Optional imports:
+# - xarray
+
+try:
+    from thread_dict import ThreadSafeDict
+except ModuleNotFoundError:
+    from autoroute.thread_dict import ThreadSafeDict
 
 # GDAL setups
 os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = 'TRUE' # Set to avoid reading really large folders
@@ -37,7 +44,9 @@ if gdal.GetDriverByName("Parquet") is not None:
     GEOMETRY_SAVE_EXTENSION = "parquet"
 else:
     GEOMETRY_SAVE_EXTENSION = "gpkg"
-
+    
+# Load existing metadata
+_file_hash_dict = ThreadSafeDict('.file_metadata.json')
 
 class AutoRouteHandler:
     def __init__(self, 
@@ -136,6 +145,8 @@ class AutoRouteHandler:
                 set(tqdm.tqdm(pool.imap_unordered(self.optimize_outputs, mifns), total=len(mifns), desc="Optimizing outputs"))
 
             logging.info("Finished processing all inputs\n")
+        
+        _file_hash_dict.save()
  
     def setup(self, yaml_file: Union[dict, str]) -> None:
         """
@@ -280,8 +291,7 @@ class AutoRouteHandler:
         os.makedirs(os.path.join(self.DATA_DIR, 'bathymetry'), exist_ok=True)
         os.makedirs(os.path.join(self.DATA_DIR, 'curves'), exist_ok=True)
 
-    def find_dems_in_extent(self, 
-                            extent: list = None) -> List[str]:
+    def find_dems_in_extent(self, extent: list = None) -> List[str]:
         dems = self.find_files(self.DEM_FOLDER)
         if extent:
             dems = [dem for dem in dems if self.is_in_extent(dem, extent)]
@@ -297,9 +307,7 @@ class AutoRouteHandler:
             tif_files.extend(glob.glob(os.path.join(root, type)))
         return tif_files
 
-    def is_in_extent(self, 
-                          ds: Any,
-                          extent: list = None) -> bool:
+    def is_in_extent(self, ds: Any,extent: list = None) -> bool:
         if extent is None:
             return True
         if isinstance(ds, str):
@@ -310,12 +318,7 @@ class AutoRouteHandler:
         ds = None
         return self._isin(minx, miny, maxx, maxy, extent)
     
-    def _isin(self, 
-              minx: float, 
-              miny: float, 
-              maxx: float, 
-              maxy: float, 
-              extent: list) -> bool:
+    def _isin(self, minx: float, miny: float, maxx: float, maxy: float, extent: list) -> bool:
         minx1, miny1, maxx1, maxy1 = extent 
         if (minx1 <= maxx and maxx1 >= minx and miny1 <= maxy and maxy1 >= miny):
             return True
@@ -358,7 +361,7 @@ class AutoRouteHandler:
 
         os.makedirs(os.path.join(self.DATA_DIR, 'dems',self.DEM_NAME + "__buffered"), exist_ok=True)
         buffered_dem = os.path.join(self.DATA_DIR, 'dems',self.DEM_NAME + "__buffered", self.create_fname(minx, miny, maxx, maxy, append='_buff'))
-        if not self.OVERWRITE and os.path.exists(buffered_dem):
+        if os.path.exists(buffered_dem) and not self.OVERWRITE and self.hash_match(dem, buffered_dem):
             return buffered_dem
 
         dems = self.find_dems_in_extent(extent=(minx, miny, maxx, maxy))
@@ -371,6 +374,7 @@ class AutoRouteHandler:
                                             srcNodata=no_data_value,
                                             outputBounds=(minx, miny, maxx, maxy))
         gdal.BuildVRT(buffered_dem, dems, options=vrt_options)
+        self.update_hash(dem, buffered_dem)
         return buffered_dem
         
     def _sizeof_fmt(self, num:int) -> str:
@@ -389,7 +393,7 @@ class AutoRouteHandler:
             logging.warning(f'Could not open {path}. Is this a valid file?')
         return ds
     
-    def get_ds_extent(self, ds: gdal.Dataset) -> Tuple[float, float, float, float]:
+    def get_ds_extent(self, ds: gdal.Dataset) -> Tuple[float, ...]:
         geo = ds.GetGeoTransform()
         minx = geo[0]
         maxy = geo[3]
@@ -397,40 +401,34 @@ class AutoRouteHandler:
         miny = maxy + geo[5] * ds.RasterYSize
         return minx, miny, maxx, maxy
     
-    def gpd_read(self, 
-                 path: str,
-                 bbox: box = None,
-                 columns = None,) -> gpd.GeoDataFrame:
+    def gpd_read(self, path: str,bbox: box = None,columns = None,) -> gpd.GeoDataFrame:
         """
         Reads .parquet, .shp, .gpkg, and potentially others and returns in a way we expect.
         """
         global GPD_ENGINE
-        if columns and None in columns or [] in columns:
-            # Stream id was never specified, so we assume that the id is the first entry in the file
+
+        # Handle case where columns contain None or are empty
+        if columns and (None in columns or not columns):
             columns = None
-        elif 'geometry' not in columns:
+
+        if columns and 'geometry' not in columns:
             columns.append('geometry')
-            
+
+        # Read different file types
         if path.endswith((".parquet", ".geoparquet")):
-            if columns:
-                df = gpd.read_parquet(path, columns=columns)
-            else:
-                df = gpd.read_parquet(path)
+            df = gpd.read_parquet(path, columns=columns)
             if bbox:
                 df = df[df.geometry.intersects(bbox)]
         elif path.endswith((".shp", ".gpkg")):
-            if bbox:
-                df = gpd.read_file(path, bbox=bbox, engine=GPD_ENGINE)
-            else:
-                df = gpd.read_file(path, engine=GPD_ENGINE)
+            df = gpd.read_file(path, bbox=bbox, engine=GPD_ENGINE)
             if columns:
                 df = df[columns]
         else:
             raise NotImplementedError(f"Unsupported file type: {path}")
+
         return df
             
-    def create_strm_file(self, 
-                         dem: str, ) -> str:
+    def create_strm_file(self, dem: str) -> str:
         global GEOMETRY_SAVE_EXTENSION
         ds = self.open_w_gdal(dem)
         if not ds: return
@@ -440,8 +438,7 @@ class AutoRouteHandler:
         strm = os.path.join(self.DATA_DIR, 'stream_files', f"{self.DEM_NAME}__{self.STREAM_NAME}")
         os.makedirs(strm, exist_ok=True)
         strm = os.path.join(strm, f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__strm.tif")
-        if not self.OVERWRITE and os.path.exists(strm):
-            #logging.info(f"{strm} already exists. Skipping...")
+        if not self.OVERWRITE and os.path.exists(strm) and self.hash_match(dem, strm):
             return strm
         
         minx, miny, maxx, maxy = self.get_ds_extent(ds)
@@ -504,6 +501,7 @@ class AutoRouteHandler:
                 df.to_file(tmp_streams)
         except KeyError as e:
             logging.error(f"{self.STREAM_ID} not found in the stream files here: {self.STREAM_NETWORK_FOLDER}")
+            return
 
         options = gdal.RasterizeOptions(attribute=self.STREAM_ID,
                               outputType=gdal.GDT_UInt32, # Assume no negative IDs. DO NOT SET TO UINT64
@@ -516,6 +514,7 @@ class AutoRouteHandler:
                               height=height,
         )
         gdal.Rasterize(strm, tmp_streams, options=options)
+        self.update_hash(dem, strm)
         os.remove(tmp_streams)
         return strm
 
@@ -525,19 +524,27 @@ class AutoRouteHandler:
         row_col_file = os.path.join(self.DATA_DIR, 'rapid_files', f"{self.DEM_NAME}__{self.STREAM_NAME}")
         os.makedirs(row_col_file, exist_ok=True)
         row_col_file = os.path.join(row_col_file, f"{os.path.basename(strm).split('.')[0]}__row_col_id.txt")
-        if not self.OVERWRITE and os.path.exists(row_col_file):
-            #logging.info(f"{row_col_file} already exists. Skipping...")
+        if not self.OVERWRITE and os.path.exists(row_col_file) and self.hash_match(strm, self.SIMULATION_FLOWFILE, row_col_file):
             return row_col_file
 
         if self.SIMULATION_FLOWFILE.lower().endswith(('.csv', '.txt', '.nc','.nc3','.nc4')):
             if self.SIMULATION_FLOWFILE.lower().endswith(('.csv', '.txt')):
                 df = pd.read_csv(self.SIMULATION_FLOWFILE, sep=',')
             elif self.SIMULATION_FLOWFILE.lower().endswith(('.nc','.nc3','.nc4')):
-                df = (xr.open_dataset(self.SIMULATION_FLOWFILE)
-                      .to_dataframe()
-                      .reset_index() # This gets the first column back instead of being an index
-                )
-                
+                try:
+                    import xarray as xr
+                except ImportError:
+                    logging.error("Please install xarray to read netcdf files")
+                    return
+                try:
+                    df = (xr.open_dataset(self.SIMULATION_FLOWFILE)
+                        .to_dataframe()
+                        .reset_index() # This gets the first column back instead of being an index
+                    )
+                except OSError:
+                    logging.error("Please install netcdf4 to read netcdf files")
+                    return
+                    
             if not self.SIMULATION_ID_COLUMN:
                 self.SIMULATION_ID_COLUMN =df.columns[0]
                 self.multiprocess_data['SIMULATION_ID_COLUMN'] = df.columns[0]
@@ -569,8 +576,6 @@ class AutoRouteHandler:
             if df.empty:
                 logging.error(f"No data in the flow file: {self.SIMULATION_FLOWFILE}")
                 return
-            
-
         else:
             raise NotImplementedError(f"Unsupported file type: {self.SIMULATION_FLOWFILE}")
                 
@@ -592,6 +597,7 @@ class AutoRouteHandler:
             .fillna(0)
             .to_csv(row_col_file, sep="\t", index=False)
         )
+        self.update_hash(strm, self.SIMULATION_FLOWFILE, row_col_file)
         return row_col_file
 
     def create_flood_flowfile(self, strm: str) -> str:
@@ -600,7 +606,7 @@ class AutoRouteHandler:
         flowfile = os.path.join(self.DATA_DIR, 'flow_files', f"{self.DEM_NAME}__{self.STREAM_NAME}")
         os.makedirs(flowfile, exist_ok=True)
         flowfile = os.path.join(flowfile, f"{os.path.basename(strm).split('.')[0]}__flow.txt")
-        if not self.OVERWRITE and os.path.exists(flowfile):
+        if not self.OVERWRITE and os.path.exists(flowfile) and self.hash_match(strm, self.FLOOD_FLOWFILE, flowfile):
            # logging.info(f"{flowfile} already exists. Skipping...")
             return flowfile
 
@@ -630,6 +636,7 @@ class AutoRouteHandler:
             df[df[id_col].isin(ids)]
             .to_csv(flowfile,index=False)
         )
+        self.update_hash(strm, self.FLOOD_FLOWFILE, flowfile)
         return flowfile
 
     def create_land_use(self, dem: str) -> str:
@@ -637,8 +644,7 @@ class AutoRouteHandler:
         lu_file = os.path.join(self.DATA_DIR, 'land_use', f"{self.DEM_NAME}__{self.LAND_USE_NAME}")
         os.makedirs(lu_file, exist_ok=True)
         lu_file = os.path.join(lu_file, f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__lu.vrt")
-        if not self.OVERWRITE and os.path.exists(lu_file):
-            #logging.info(f"{lu_file} already exists. Skipping...")
+        if not self.OVERWRITE and os.path.exists(lu_file) and self.hash_match(dem, lu_file):
             return lu_file
         dem_ds = self.open_w_gdal(dem)
         if not dem_ds: 
@@ -715,6 +721,7 @@ class AutoRouteHandler:
                                            yRes=y_res,
                                            )
             gdal.BuildVRT(lu_file, files_to_use, options=vrt_options)
+        self.hash_match(dem, lu_file)
         return lu_file
 
     def check_has_same_projection(self, files: List[str]) -> bool:
@@ -755,7 +762,7 @@ class AutoRouteHandler:
         maxy = min(maxy, self.EXTENT[3])
 
         cropped_dem = os.path.join(self.DATA_DIR, 'dems', self.DEM_NAME, self.create_fname(minx, miny, maxx, maxy, append='_crop'))
-        if not self.OVERWRITE and os.path.exists(cropped_dem):
+        if not self.OVERWRITE and os.path.exists(cropped_dem) and self.hash_match(dem, cropped_dem):
             #logging.info(f"{cropped_dem} already exists. Skipping...")
             return
 
@@ -764,14 +771,10 @@ class AutoRouteHandler:
                                         srcNodata=no_data_value,
                                         outputBounds=(minx, miny, maxx, maxy))
         gdal.BuildVRT(cropped_dem, dem, options=vrt_options)
+        self.update_hash(dem, cropped_dem)
         return cropped_dem
             
-    def create_mifn_file(self, 
-                         dem: str, 
-                         strm: str, 
-                         lu: str, 
-                         rapid_flow_file: str, 
-                         flowfile: str) -> str:
+    def create_mifn_file(self, dem: str, strm: str, lu: str, rapid_flow_file: str, flowfile: str) -> str:
         # Format path strings
         if not dem or not strm or not rapid_flow_file or not flowfile:
             return
@@ -783,7 +786,9 @@ class AutoRouteHandler:
         mifn = os.path.join(mifn, f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__mifn.txt")
         
         if not self.OVERWRITE and os.path.exists(mifn):
-            return mifn
+            contents = open(mifn, 'r').read()
+            if self.hash_match(mifn, contents):
+                return mifn
         
         meta_file = os.path.join(self.DATA_DIR, 'meta_files', f"{self.DEM_NAME}__{self.STREAM_NAME}")
         os.makedirs(meta_file, exist_ok=True)
@@ -941,7 +946,10 @@ class AutoRouteHandler:
                     bathy_file = os.path.join(self.DATA_DIR, 'bathymetry', f"{self.DEM_NAME}__{self.STREAM_NAME}")
                     os.makedirs(bathy_file, exist_ok=True)
                     bathy_file = os.path.join(bathy_file, f"{os.path.basename(dem).split('.')[0]}__ar_bathy.tif")
-                self._write(f,'BATHY_Out_File',bathy_file)
+                if self.AUTOROUTE_PYTHON_MAIN:
+                    self._write(f,'BATHY_Out_File',bathy_file)
+                else:
+                    self._write(f,'BATHY_Out_File',bathy_file)
                 self._write(f,'Bathymetry_Alpha',self.bathy_alpha)
                 
 
@@ -1051,6 +1059,8 @@ class AutoRouteHandler:
                 elif self.fs_bathy_smooth_method == 'Inverse-Distance Weighted':
                     self._write(f,'BathyTopWidthDistanceFactor', self.bathy_twd_factor)
 
+        contents = open(mifn, 'r').read()
+        self.update_hash(mifn, contents)
         return mifn
 
     def _format_files(self,file_path: str) -> str:
@@ -1090,32 +1100,15 @@ class AutoRouteHandler:
         output = set({})
         for key, value in  dems.items():
             out_tuple = [value]
-            if strms.get(key, False):
-                out_tuple.append(strms[key])
-            else:
-                out_tuple.append('')
-
-            if lus.get(key, False):
-                out_tuple.append(lus[key])
-            else:
-                out_tuple.append('')
-
-            if row_col_ids.get(key, False):
-                out_tuple.append(row_col_ids[key])
-            else:
-                out_tuple.append('')
-
-            if flow_ids.get(key, False):
-                out_tuple.append(flow_ids[key])
-            else:
-                out_tuple.append('')
+            out_tuple.append(strms.get(key, ''))
+            out_tuple.append(lus.get(key, ''))
+            out_tuple.append(row_col_ids.get(key, ''))
+            out_tuple.append(flow_ids.get(key, ''))
             
             output.add(tuple(out_tuple))
 
         return output
 
-
-    
     def run_autoroute(self, mifn: str) -> None:
         try:
             if self.USE_PYTHON:
@@ -1134,8 +1127,7 @@ class AutoRouteHandler:
             mifn = self._format_files(mifn.strip())
 
             vdt = self.get_item_from_mifn(mifn, key='Print_VDT_Database')
-            if vdt and os.path.exists(vdt) and not self.OVERWRITE:
-                #logging.info(f"{vdt} already exists. Skipping...")
+            if not self.OVERWRITE and vdt and os.path.exists(vdt) and self.hash_match(mifn, vdt):
                 return
 
             process = subprocess.run(f'conda activate {self.AUTOROUTE_CONDA_ENV} && echo "a" | {exe} {mifn}', # We echo a dummy input in so that AutoRoute can terminate if some input is wrong
@@ -1153,11 +1145,10 @@ class AutoRouteHandler:
             elif process.returncode != 0:
                 logging.error(f"Error running AutoRoute: {process.stderr.decode('utf-8')}")
 
+            self.update_hash(mifn, vdt)
             return process.stdout.decode('utf-8') + process.stderr.decode('utf-8')
         except Exception as e:
             logging.error(f"Error running autoroute: {e}")
-
-        
 
     def run_floodspreader(self, mifn: str) -> None:
         try:
@@ -1175,8 +1166,7 @@ class AutoRouteHandler:
             fs_bathy_file = self.get_item_from_mifn(mifn, key='FSOutBATHY')
             maps = {fld_map, dep_map, vel_map, wse_map, fs_bathy_file} - {""}
             
-            if all(os.path.exists(m) for m in maps) and not self.OVERWRITE:
-                #logging.info(f"All maps already exist. Not running FloodSpreader...")
+            if not self.OVERWRITE and all(os.path.exists(m) for m in maps) and self.hash_match(mifn, *maps):
                 return
             # We must remove these maps in order for FloodSpreader to succesfuly run
             {os.remove(m) for m in maps if os.path.exists(m)}
@@ -1200,6 +1190,7 @@ class AutoRouteHandler:
         elif process.returncode != 0:
             logging.error(f"Error running FloodSpreader: {process.stderr.decode('utf-8')}")
             
+        self.update_hash(mifn, *maps)
         return process.stdout.decode('utf-8') + process.stderr.decode('utf-8')
     
     def get_item_from_mifn(self, mifn: str, key: str) -> str:
@@ -1237,6 +1228,8 @@ class AutoRouteHandler:
             maps = {fld_map, dep_map, vel_map, wse_map, fs_bathy, ar_bathy} - {""}
             for m in maps:
                 if os.path.exists(m):
+                    if self.hash_match(m):
+                        continue # Skip unmodified files
                     ds = gdal.Open(m)
                     geotransform = ds.GetGeoTransform()
                     projection = ds.GetProjection()
@@ -1267,36 +1260,43 @@ class AutoRouteHandler:
                     ds.GetRasterBand(1).WriteArray(array)
                     ds.GetRasterBand(1).SetNoDataValue(noData)
                     ds = None
+                    self.update_hash(m)
         except Exception as e:
             logging.error(f"Error cleaning outputs: {e}")
 
-    def create_fname(self, 
-                     minx: float, 
-                     miny: float, 
-                     maxx: float, 
-                     maxy: float,
-                     _type: str = '.vrt',
-                     append: str = '') -> str:
-        output = ""
-        if miny < 0:
-            output += "S"
-        else:
-            output += "N"
-        output += str(round(abs(miny), 3)).replace('.','_') 
-        if minx < 0:
-            output += "W"
-        else:
-            output += "E"
-        output += str(round(abs(minx), 3)).replace('.','_') + '__'
-        if maxy < 0:
-            output += "S"
-        else:
-            output += "N"
-        output += str(round(abs(maxy), 3)).replace('.','_')
-        if maxx < 0:
-            output += "W"
-        else:
-            output += "E"
-        output += str(round(abs(maxx), 3)).replace('.','_') + append + _type
-        return output
+    def create_fname(self, minx: float, miny: float, maxx: float, 
+                     maxy: float,_type: str = '.vrt',append: str = '') -> str:
+        return f"{self.format_coord(miny, True)}{self.format_coord(minx, False)}__{self.format_coord(maxy, True)}{self.format_coord(maxx, False)}{append}{_type}"
 
+    def format_coord(self, value: float, is_latitude: bool) -> str:
+        """Helper function to format coordinates with direction and rounded value."""
+        direction = 'S' if value < 0 else 'N' if is_latitude else 'W' if value < 0 else 'E'
+        return f"{direction}{str(round(abs(value), 3)).replace('.', '_')}"
+    
+    def _hash(self, file_path: str, *args) -> str:
+        string = f"{os.path.getmtime(file_path)}{os.path.getsize(file_path)}{os.path.basename(file_path)}"
+        if args:
+            for arg in args:
+                if os.path.isfile(arg):
+                    string += f"{os.path.getmtime(arg)}{os.path.getsize(arg)}{os.path.basename(arg)}"
+                    continue
+                string += str(arg)
+                
+        return hashlib.blake2b(string.encode()).hexdigest()
+    
+    def hash_match(self, file: str, *args) -> bool:
+        return self._hash(file, *args) == _file_hash_dict.get(self.create_key(file), '')
+    
+    def update_hash(self, file: str, *args) -> None:
+        _file_hash_dict[self.create_key(file)] = self._hash(file, *args)
+        
+    def create_key(self, *args):
+        string = []
+        for arg in args:
+            if os.path.isfile(arg):
+                string.append(f"{os.path.getmtime(arg)}{os.path.getsize(arg)}{os.path.basename(arg)}")
+                continue
+            string.append(str(arg))
+        return hashlib.blake2b(''.join(string).encode()).hexdigest()
+      
+atexit.register(_file_hash_dict.save)

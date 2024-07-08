@@ -10,6 +10,7 @@ import signal
 import logging
 
 import helper_funcs as hp
+import datetime
 manager = hp.ManagerFacade()
 
 logging.basicConfig(level=logging.INFO,
@@ -116,11 +117,6 @@ if __name__ == '__main__':
                                 )
 
                             with gr.Row():
-                                overwrite = gr.Checkbox(value=manager.default("overwrite"),
-                                                        label='Overwrite',
-                                                            #info='Overwrite existing files?',
-                                                            interactive=True)
-                                
                                 crop = gr.Checkbox(value=manager.default("crop"),
                                                 label='Crop',
                                                     info='Crop output to extent?',
@@ -472,7 +468,7 @@ if __name__ == '__main__':
                                                                     visible='Inverse-Distance Weighted' in manager.default("fs_bathy_smooth_method"))
                                         fs_bathy_smooth_method.change(lambda x: gr.Number(visible=True) if x[0] == 'I' else gr.Number(visible=False),
                                                                     fs_bathy_smooth_method, bathy_twd_factor)
-        
+                overwrite = gr.Checkbox(False, visible=False)
                 inputs = [dem,dem_name, strm_lines, strm_name, lu_file, lu_name, base_max_file, subtract_baseflow, flow_id, flow_params_ar, flow_baseflow, num_iterations,
                                                         meta_file, convert_cfs_to_cms, x_distance, q_limit, LU_Manning_n, direction_distance, slope_distance, low_spot_distance, low_spot_is_meters,
                                                         low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, degree_manip, degree_interval, Str_Limit_Val, UP_Str_Limit_Val, row_start, row_end, use_prev_d_4_xs,
@@ -491,7 +487,33 @@ if __name__ == '__main__':
                 get_ids_button.click(fn=manager.get_ids, inputs=[dem, strm_lines, minx, miny, maxx, maxy, ids_folder, flow_id], outputs=[])
 
             with gr.TabItem('File Preprocessing'):
-                pass
+                with gr.Tabs():
+                    with gr.TabItem("Get Forecast Data for GEOGLoWS IDs"):
+                        gr.Markdown("## Get Forecast Data for GEOGLoWS IDs\n\nThis tool will get forecast data for a list of GEOGLoWS IDs. The IDs must be a file with only one column. A header may or may not be present. This function will get the data from geoglows V2, select just the enesmble, and get the maximum values from that ensemble across all of it's time. The output file is guarentted to have two columns, one named 'LINKNO' and the other 'max_forecast'.")
+                        id_list  = gr.Textbox(value=manager.default("id_forecast_list"), 
+                                                            placeholder='/User/Desktop/id_list.csv',
+                                                            label="ID File",
+                                                            info=manager.doc('id_forecast_list'),
+                                                            )
+                        
+                        date = gr.Textbox(datetime.datetime.now().strftime("%Y%m%d"),
+                                            label='Date',
+                                            info='Date for forecast data. Must be entered in YYYYMMDD format',
+                                            )
+                        
+                        ensemble = gr.Textbox(value='ensemble_52',
+                                              label='Ensemble',
+                                            info='Ensemble for forecast data',
+                                            )
+                        
+                        output_forecast_file = gr.Textbox(placeholder='/User/Desktop/forecast.csv',
+                                                        label='Output File',
+                                                        info='Output file for forecast data',
+                                                        )
+                        
+                        get_forecast_button = gr.Button("Get Forecast Data")
+                        get_forecast_button.click(fn=manager.get_forecast, inputs=[id_list, output_forecast_file, date, ensemble], outputs=[])
+                        
 
 
 
