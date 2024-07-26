@@ -133,7 +133,7 @@ class AutoRouteHandler:
 
             if self.FLOOD_FLOWFILE:
                 flood_files =list(tqdm.tqdm(pool.imap_unordered(self.create_flood_flowfile, strms), 
-                                            total=len(strms),desc='Creating flow files'), disable=self.DISABLE_PBAR)
+                                            total=len(strms),desc='Creating flow files', disable=self.DISABLE_PBAR))
             
             pairs = self._zip_files(dems, strms, lus, sim_flow_files, flood_files)
             if self.AUTOROUTE or self.FLOODSPREADER:
