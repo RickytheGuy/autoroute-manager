@@ -526,7 +526,7 @@ class AutoRouteHandler:
                 logging.error(f"{self.STREAM_ID} not found in the stream files here: {self.STREAM_NETWORK_FOLDER}")
                 return
         else:
-            with fiona.open(f, 'r') as src:
+            with fiona.open(strms[0], 'r') as src:
                 crs = src.crs
             if ds_epsg != crs.to_epsg():
                 projection = self.get_projection_from_gdf(df)
