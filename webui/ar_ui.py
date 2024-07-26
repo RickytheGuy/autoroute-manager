@@ -127,6 +127,7 @@ if __name__ == '__main__':
                                                     interactive=True)
                                 with gr.Column():
                                     buffer = gr.Checkbox(value=manager.default("buffer"),
+                                                         visible=False,
                                                         label='Buffer',
                                                         info='Buffer the DEMs?',
                                                         interactive=True)
@@ -513,6 +514,27 @@ if __name__ == '__main__':
                         
                         get_forecast_button = gr.Button("Get Forecast Data")
                         get_forecast_button.click(fn=manager.get_forecast, inputs=[id_list, output_forecast_file, date, ensemble], outputs=[])
+                    
+                    with gr.TabItem("Get Median Forecast Data for GEOGLoWS IDs"):
+                        gr.Markdown("## Get Median Forecast Data for GEOGLoWS IDs\n\nThis tool will get forecast data for a list of GEOGLoWS IDs. The IDs must be a file with only one column. A header may or may not be present. This function will get the data from geoglows V2, select all enesmble medians, and get the maximum values for each ID for all enseumble time. The output file is guarentted to have two columns, one named 'LINKNO' and the other 'max_median_flow'.")
+                        id_list_medians  = gr.Textbox(value=manager.default("id_forecast_list"), 
+                                                            placeholder='/User/Desktop/id_list.csv',
+                                                            label="ID File",
+                                                            info=manager.doc('id_forecast_list'),
+                                                            )
+                        
+                        date_median = gr.Textbox(datetime.datetime.now().strftime("%Y%m%d"),
+                                            label='Date',
+                                            info='Date for forecast data. Must be entered in YYYYMMDD format',
+                                            )
+                        
+                        output_median_file = gr.Textbox(placeholder='/User/Desktop/forecast.csv',
+                                                        label='Output File',
+                                                        info='Output file for forecast data',
+                                                        )
+                        
+                        get_median_button = gr.Button("Get Max Median Forecast Data")
+                        get_median_button.click(fn=manager.get_median_max_forecast, inputs=[id_list_medians, output_median_file, date_median], outputs=[])
                         
 
 

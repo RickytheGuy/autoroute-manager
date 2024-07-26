@@ -4,10 +4,11 @@ import os
 import math
 import glob
 import multiprocessing
-from typing import Tuple, Any, List, Set, Callable, Union
+from typing import Tuple, Any, List, Set, Callable, Union, TextIO
 import subprocess
 import asyncio
-import atexit
+import json
+import importlib.util
 
 import fiona
 import yaml
@@ -22,21 +23,17 @@ from pyproj import Transformer
 # Optional imports:
 # - xarray
 
-try:
-    from thread_dict import ThreadSafeDict
-except ModuleNotFoundError:
-    from autoroute.thread_dict import ThreadSafeDict
-
 # GDAL setups
 os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = 'TRUE' # Set to avoid reading really large folders
 os.environ["GDAL_NUM_THREADS"] = 'ALL_CPUS'
 gdal.UseExceptions()
 
-try:
-    import pyogrio
+
+if (spec := importlib.util.find_spec('pyogrio')) is not None:
     GPD_ENGINE = "pyogrio"
-    os.environ["PYOGRIO_USE_ARROW"] = "1"
-except ImportError:
+    if int(gdal.VersionInfo()) >= 3060000 and importlib.util.find_spec('pyogrio') is not None:
+        os.environ["PYOGRIO_USE_ARROW"] = "1"
+else:
     GPD_ENGINE = "fiona"
 
 if gdal.GetDriverByName("Parquet") is not None:
@@ -45,8 +42,6 @@ if gdal.GetDriverByName("Parquet") is not None:
 else:
     GEOMETRY_SAVE_EXTENSION = "gpkg"
     
-# Load existing metadata
-_file_hash_dict = ThreadSafeDict('.file_metadata.json')
 
 class AutoRouteHandler:
     def __init__(self, 
@@ -56,6 +51,17 @@ class AutoRouteHandler:
         """
         if yaml:
             self.setup(yaml)
+            
+        self._hash_file = '.file_metadata.json'
+        self._file_hash_dict = multiprocessing.Manager().dict()
+        if os.path.exists(self._hash_file):
+            with open(self._hash_file, 'r') as f:
+                try:
+                    tmp = json.load(f)
+                except json.JSONDecodeError:
+                    tmp = {}
+                for key, value in tmp.items():
+                    self._file_hash_dict[key] = value
 
     def run(self) -> None:
         logging.info("Starting model run...")
@@ -77,11 +83,11 @@ class AutoRouteHandler:
                 return
         else:
             if self.BUFFER_FILES:
-                dems = {f for f in glob.glob(os.path.join(self.DATA_DIR, 'dems', self.DEM_NAME + "__buffered", "*")) if f.lower().endswith((".tif", ".vrt"))}
+                dems = {f for f in glob.glob(os.path.join(self.DATA_DIR, 'dems', "buffered", "*")) if f.lower().endswith((".tif", ".vrt"))}
             elif self.CROP:
-                dems = {f for f in glob.glob(os.path.join(self.DATA_DIR, 'dems', self.DEM_NAME, "*_crop.*")) if f.lower().endswith((".tif", ".vrt"))}
+                dems = {f for f in glob.glob(os.path.join(self.DATA_DIR, 'dems', "cropped", "*")) if f.lower().endswith((".tif", ".vrt"))}
             else:
-                dems = glob.glob(os.path.join(self.DATA_DIR, 'dems', self.DEM_NAME, "*"))
+                dems = glob.glob(os.path.join(self.DATA_DIR, 'dems', "*"))
         if self.EXTENT:
             dems = {dem for dem in dems if self.is_in_extent(dem, self.EXTENT)}
         if not dems:
@@ -93,36 +99,41 @@ class AutoRouteHandler:
         with multiprocessing.Pool(processes=processes) as pool:
             if self.BUFFER_FILES and self.DEM_FOLDER:
                 logging.info(f"Buffering {n_dems} DEM(s)...")
-                dems = list(tqdm.tqdm(pool.imap_unordered(self.buffer_dem, dems)))
+                dems = list(tqdm.tqdm(pool.imap_unordered(self.buffer_dem, dems), disable=self.DISABLE_PBAR))
 
             elif self.CROP and self.EXTENT and self.DEM_FOLDER:
                 logging.info(f"Cropping {n_dems} DEM(s)...")
-                dems = list(tqdm.tqdm(pool.imap_unordered(self.crop, dems), total=len(dems)))
+                dems = list(tqdm.tqdm(pool.imap_unordered(self.crop, dems), total=len(dems), disable=self.DISABLE_PBAR))
 
-            if self.STREAM_NETWORK_FOLDER or self.STREAM_NAME:
+            if self.STREAM_NETWORK_FOLDER:
+                strms_dems = self.map_dems_and_streams(dems)
                 logging.info(f"Creating stream rasters for {n_dems} DEM(s)...")
-                strms = list(tqdm.tqdm(pool.imap_unordered(self.create_strm_file, dems), total=len(dems)))
+                strms = tqdm.tqdm(pool.imap_unordered(self.create_strm_file, strms_dems), total=len(strms_dems), disable=self.DISABLE_PBAR) # TODO fix total
+                strms = [strm for strm_list in strms for strm in strm_list if strm]
             else:
                 logging.error("No stream network folder or stream name provided. Exiting...")
                 return
             
-            n_strms = len({strm for strm in strms if strm})
+            n_strms = len(strms)
             if n_strms != n_dems:
                 logging.warning(f"Only {n_strms} stream files were created out of {n_dems} DEMs")
 
             if self.LAND_USE_FOLDER:
                 logging.info(f"Creating land use rasters for {n_dems} DEM(s)...")
-                lus = list(tqdm.tqdm(pool.imap_unordered(self.create_land_use, dems), total=len(dems)))
+                lus = list(tqdm.tqdm(pool.imap_unordered(self.create_land_use, dems), 
+                                     total=len(dems), disable=self.DISABLE_PBAR))
 
             if not self.DEM_FOLDER and self.EXTENT:
                 strms = {strm for strm in strms if self.is_in_extent(strm, self.EXTENT)}
             if strms and self.SIMULATION_FLOWFILE:
-                sim_flow_files =list(tqdm.tqdm( pool.imap_unordered(self.create_row_col_id_file, strms), total=len(strms),desc='Creating row col id files'))
+                sim_flow_files =list(tqdm.tqdm(pool.imap_unordered(self.create_row_col_id_file, strms), 
+                                               total=len(strms),desc='Creating row col id files', disable=self.DISABLE_PBAR))
                 if self.multiprocess_data.get('SIMULATION_ID_COLUMN', False):
                     self.SIMULATION_ID_COLUMN = self.multiprocess_data['SIMULATION_ID_COLUMN']
 
             if self.FLOOD_FLOWFILE:
-                flood_files =list(tqdm.tqdm( pool.imap_unordered(self.create_flood_flowfile, strms), total=len(strms),desc='Creating flow files'))
+                flood_files =list(tqdm.tqdm(pool.imap_unordered(self.create_flood_flowfile, strms), 
+                                            total=len(strms),desc='Creating flow files'), disable=self.DISABLE_PBAR)
             
             pairs = self._zip_files(dems, strms, lus, sim_flow_files, flood_files)
             if self.AUTOROUTE or self.FLOODSPREADER:
@@ -132,21 +143,24 @@ class AutoRouteHandler:
                     logging.warning(f"Only {len(mifns)} mifn files were created out of {n_dems} DEMs")
 
             if self.AUTOROUTE:
-                set(tqdm.tqdm(pool.imap_unordered(self.run_autoroute, mifns), total=len(mifns), desc="Running AutoRoute"))
+                set(tqdm.tqdm(pool.imap_unordered(self.run_autoroute, mifns), total=len(mifns), 
+                              desc="Running AutoRoute", disable=self.DISABLE_PBAR))
 
             if self.FLOODSPREADER:
                 if not self.FLOOD_FLOWFILE:
                     logging.warning("FloodSpreader requires a flood flow file. Will not run...")
                 else:
-                    set(tqdm.tqdm(pool.imap_unordered(self.run_floodspreader, mifns), total=len(mifns), desc='Running FloodSpreader'))
+                    set(tqdm.tqdm(pool.imap_unordered(self.run_floodspreader, mifns), total=len(mifns), 
+                                  desc='Running FloodSpreader', disable=self.DISABLE_PBAR))
                     logging.info('FloodSpreader finished')
 
             if self.CLEAN_OUTPUTS:
-                set(tqdm.tqdm(pool.imap_unordered(self.optimize_outputs, mifns), total=len(mifns), desc="Optimizing outputs"))
+                set(tqdm.tqdm(pool.imap_unordered(self.optimize_outputs, mifns), total=len(mifns), 
+                              desc="Optimizing outputs", disable=self.DISABLE_PBAR))
 
             logging.info("Finished processing all inputs\n")
         
-        _file_hash_dict.save()
+        self.save_hashes()
  
     def setup(self, yaml_file: Union[dict, str]) -> None:
         """
@@ -186,7 +200,6 @@ class AutoRouteHandler:
         self.BUFFER_FILES = False
         self.BUFFER_DISTANCE = 0.1
         self.DEM_FOLDER = ""
-        self.DEM_NAME = ""
         self.STREAM_NETWORK_FOLDER = ""
         self.LAND_USE_FOLDER = "" 
         self.SIMULATION_FLOWFILE = ""
@@ -196,13 +209,12 @@ class AutoRouteHandler:
         self.EXTENT = None
         self.CROP = False
         self.OVERWRITE = False
-        self.STREAM_NAME = "" 
         self.STREAM_ID = ""
         self.BASE_FLOW_COLUMN = ""
-        self.LAND_USE_NAME = ""
         self.MANNINGS_TABLE = ""
         self.CLEAN_OUTPUTS = False
         self.multiprocess_data = multiprocessing.Manager().dict()
+        self.DISABLE_PBAR = False
 
         self.AUTOROUTE_PYTHON_MAIN: Callable = "" # Hidden
         self.USE_PYTHON = False
@@ -279,6 +291,8 @@ class AutoRouteHandler:
             pass
 
         os.makedirs(os.path.join(self.DATA_DIR,'dems'), exist_ok = True)
+        os.makedirs(os.path.join(self.DATA_DIR,'dems', 'buffered'), exist_ok = True)
+        os.makedirs(os.path.join(self.DATA_DIR,'dems', 'cropped'), exist_ok = True)
         os.makedirs(os.path.join(self.DATA_DIR,'stream_files'), exist_ok = True)
         os.makedirs(os.path.join(self.DATA_DIR,'land_use'), exist_ok = True)
         os.makedirs(os.path.join(self.DATA_DIR,'rapid_files'), exist_ok = True)
@@ -358,10 +372,8 @@ class AutoRouteHandler:
             maxx = min(maxx, 180)
             maxy = min(maxy, 90)
         # TODO figure out if gdal has errors for out of bounds projected units
-
-        os.makedirs(os.path.join(self.DATA_DIR, 'dems',self.DEM_NAME + "__buffered"), exist_ok=True)
-        buffered_dem = os.path.join(self.DATA_DIR, 'dems',self.DEM_NAME + "__buffered", self.create_fname(minx, miny, maxx, maxy, append='_buff'))
-        if os.path.exists(buffered_dem) and not self.OVERWRITE and self.hash_match(dem, buffered_dem):
+        buffered_dem = os.path.join(self.DATA_DIR, 'dems', 'buffered', os.path.splitext(os.path.basename(dem))[0] + '_buff.tif')
+        if os.path.exists(buffered_dem) and not self.OVERWRITE and self.hash_match(buffered_dem, dem):
             return buffered_dem
 
         dems = self.find_dems_in_extent(extent=(minx, miny, maxx, maxy))
@@ -374,7 +386,7 @@ class AutoRouteHandler:
                                             srcNodata=no_data_value,
                                             outputBounds=(minx, miny, maxx, maxy))
         gdal.BuildVRT(buffered_dem, dems, options=vrt_options)
-        self.update_hash(dem, buffered_dem)
+        self.update_hash(buffered_dem, dem)
         return buffered_dem
         
     def _sizeof_fmt(self, num:int) -> str:
@@ -427,104 +439,139 @@ class AutoRouteHandler:
             raise NotImplementedError(f"Unsupported file type: {path}")
 
         return df
-            
-    def create_strm_file(self, dem: str) -> str:
+         
+    def get_geotransform_from_gdf(self, gdf: gpd.GeoDataFrame, x_res: float, y_res: float) -> Tuple[float, ...]:
+         # Get the bounds of the GeoDataFrame
+        bounds = gdf.total_bounds  # returns (minx, miny, maxx, maxy)
+
+        # Calculate geotransform coefficients
+        minx, miny, maxx, maxy = bounds
+        x_min = minx
+        y_max = maxy
+        pixel_width = x_res
+        pixel_height = -y_res  # y_res is negative because the origin is at the top-left corner
+
+        return (x_min, pixel_width, 0, y_max, 0, pixel_height)
+          
+    def get_projection_from_gdf(self, gdf: gpd.GeoDataFrame) -> str:
+        crs = gdf.crs
+        if crs is None:
+            raise ValueError("No CRS found in the GeoDataFrame")
+        return crs.to_wkt()      
+      
+    def create_strm_file(self, strms_dems: tuple) -> list:
         global GEOMETRY_SAVE_EXTENSION
-        ds = self.open_w_gdal(dem)
-        if not ds: return
-        projection = ds.GetProjection()
-        ds_epsg = self.get_epsg(ds)
-
-        strm = os.path.join(self.DATA_DIR, 'stream_files', f"{self.DEM_NAME}__{self.STREAM_NAME}")
-        os.makedirs(strm, exist_ok=True)
-        strm = os.path.join(strm, f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__strm.tif")
-        if not self.OVERWRITE and os.path.exists(strm) and self.hash_match(dem, strm):
-            return strm
+        strms, dems = strms_dems
+        output = []
+        # Get the total extent of all the DEMS
+        big_minx, big_miny, big_maxx, big_maxy = None, None, None, None
+        for dem in dems:
+            ds = self.open_w_gdal(dem)
+            if not ds: continue
+            minx, miny, maxx, maxy = self.get_ds_extent(ds)
+            big_minx = min(minx, big_minx) if big_minx else minx
+            big_miny = min(miny, big_miny) if big_miny else miny
+            big_maxx = max(maxx, big_maxx) if big_maxx else maxx
+            big_maxy = max(maxy, big_maxy) if big_maxy else maxy
+            ds_epsg = self.get_epsg(ds)
+            ds = None
+            
+            strm_raster = os.path.join(self.DATA_DIR, 'stream_files', f"{os.path.splitext(os.path.basename(dem))[0]}__strm.tif")
+            if not self.OVERWRITE and os.path.exists(strm_raster) and self.hash_match(strm_raster, dem):
+                output.append(strm_raster)
         
-        minx, miny, maxx, maxy = self.get_ds_extent(ds)
-        width=ds.RasterXSize
-        height=ds.RasterYSize
-        ds = None
-
-        if os.path.isdir(self.STREAM_NETWORK_FOLDER):
-            filenames = [os.path.join(self.STREAM_NETWORK_FOLDER,f) for f in os.listdir(self.STREAM_NETWORK_FOLDER) if f.endswith(('.shp', '.gpkg', '.parquet', '.geoparquet'))]
-        else:
-            filenames = [self.STREAM_NETWORK_FOLDER]
-        if not filenames:
-            logging.warning(f"No stream files found in {self.STREAM_NETWORK_FOLDER}")
-            return
+        if len(output) == len(dems):
+            return output
         
+
         if self.STREAM_ID == None:
             logging.warning(f"No stream id provided. We will try to assume that the first column is the id. If this is not the case, please provide the stream id.")
         
-        tmp_streams = os.path.join(self.DATA_DIR, 'tmp', f"{os.path.basename(dem).split('.')[0].replace('_buff','')}.{GEOMETRY_SAVE_EXTENSION}")
-        try:
-            dfs = []
-            for f in filenames:
-                with fiona.open(f, 'r') as src:
-                    crs = src.crs
-                    f_extent = box(*src.bounds)
-                if ds_epsg != crs.to_epsg():
-                    transformer = Transformer.from_crs(f"EPSG:{ds_epsg}",crs.to_string(), always_xy=True) 
-                    minx2, miny2 = transformer.transform(minx, miny)
-                    maxx2, maxy2 =  transformer.transform(maxx, maxy)
-                    bbox = box(minx2, miny2, maxx2, maxy2)
-                else:
-                    bbox = box(minx, miny, maxx, maxy)
-                if not f_extent.intersects(bbox):
-                    continue
-
-                try:
-                    df = self.gpd_read(f, columns=[self.STREAM_ID, 'geometry'], bbox=bbox)
-                except NotImplementedError:
-                    logging.warning(f"Skipping unsupported file: {f}")
-                    continue
-                except ValueError as e:
-                    logging.error(f"Cannot find {self.STREAM_ID} in {f}")
-                    raise e
-                
-                if not df.empty:
-                    dfs.append(df.to_crs(ds_epsg))
-            if dfs:
+        tmp_streams = os.path.join(self.DATA_DIR, 'tmp', f"temp_streams_{hash(strms)}.{GEOMETRY_SAVE_EXTENSION}")
+        if len(strms) > 1:
+            try:
+                dfs = []
+                for f in strms:
+                    with fiona.open(f, 'r') as src:
+                        crs = src.crs
+                    if ds_epsg != crs.to_epsg():
+                        transformer = Transformer.from_crs(f"EPSG:{ds_epsg}", crs.to_string(), always_xy=True) 
+                        minx2, miny2 = transformer.transform(big_minx, big_miny)
+                        maxx2, maxy2 =  transformer.transform(big_maxx, big_maxy)
+                        bbox = box(minx2, miny2, maxx2, maxy2)
+                    else:
+                        bbox = box(big_minx, big_miny, big_maxx, big_maxy)
+                    try:
+                        df = self.gpd_read(f, columns=[self.STREAM_ID, 'geometry'], bbox=bbox)
+                    except NotImplementedError:
+                        logging.warning(f"Skipping unsupported file: {f}")
+                        continue
+                    except ValueError as e:
+                        logging.error(f"Cannot find {self.STREAM_ID} in {f}")
+                        raise e
+                    
+                    if not df.empty:
+                        dfs.append(df.to_crs(ds_epsg))
                 df = gpd.GeoDataFrame(pd.concat(dfs, ignore_index=True))
-            else:
-                logging.warning(f"No streams were found in the extent of {dem}")
+                
+                if self.STREAM_ID is None or self.STREAM_ID == []:
+                    logging.info(f"Setting stream id as {df.columns[0]}")
+                    self.STREAM_ID = df.columns[0]
+                
+                if GEOMETRY_SAVE_EXTENSION == "parquet":
+                    df.to_parquet(tmp_streams)
+                else:
+                    df.to_file(tmp_streams)
+            except KeyError as e:
+                logging.error(f"{self.STREAM_ID} not found in the stream files here: {self.STREAM_NETWORK_FOLDER}")
                 return
-            
-            if self.STREAM_ID is None or self.STREAM_ID == []:
-                logging.info("Setting stream id as {df.columns[0]}")
-                self.STREAM_ID = df.columns[0]
-            
-            if GEOMETRY_SAVE_EXTENSION == "parquet":
-                df.to_parquet(tmp_streams)
+        else:
+            with fiona.open(f, 'r') as src:
+                crs = src.crs
+            if ds_epsg != crs.to_epsg():
+                projection = self.get_projection_from_gdf(df)
+                options = gdal.RasterizeOptions(attribute=self.STREAM_ID, outputType=gdal.GDT_UInt32,
+                                                # Assume no negative IDs. DO NOT SET TO UINT64 
+                                                format='GTiff', outputSRS=projection, 
+                                                creationOptions=["COMPRESS=DEFLATE", "PREDICTOR=2"], 
+                                                outputBounds=(minx, miny, maxx, maxy), noData=0, 
+                                                width=width, height=height,
+                )
             else:
-                df.to_file(tmp_streams)
-        except KeyError as e:
-            logging.error(f"{self.STREAM_ID} not found in the stream files here: {self.STREAM_NETWORK_FOLDER}")
-            return
+                tmp_streams = strms[0]
 
-        options = gdal.RasterizeOptions(attribute=self.STREAM_ID,
-                              outputType=gdal.GDT_UInt32, # Assume no negative IDs. DO NOT SET TO UINT64
-                              format='GTiff',
-                              outputSRS=projection,
-                              creationOptions=["COMPRESS=DEFLATE", "PREDICTOR=2"],
-                              outputBounds=(minx, miny, maxx, maxy),
-                              noData=0,
-                              width=width,
-                              height=height,
-        )
-        gdal.Rasterize(strm, tmp_streams, options=options)
-        self.update_hash(dem, strm)
-        os.remove(tmp_streams)
-        return strm
+        for dem in dems:
+            strm_raster = os.path.join(self.DATA_DIR, 'stream_files', f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__strm.tif")
+            if strm_raster in output: continue
+            
+            ds = self.open_w_gdal(dem)
+            minx, miny, maxx, maxy = self.get_ds_extent(ds)
+            width=ds.RasterXSize
+            height=ds.RasterYSize
+            projection = ds.GetProjection()
+            ds = None
+            options = gdal.RasterizeOptions(attribute=self.STREAM_ID,
+                                outputType=gdal.GDT_UInt32, # Assume no negative IDs. DO NOT SET TO UINT64
+                                format='GTiff',
+                                outputSRS=projection,
+                                creationOptions=["COMPRESS=DEFLATE", "PREDICTOR=2"],
+                                outputBounds=(minx, miny, maxx, maxy),
+                                noData=0,
+                                width=width,
+                                height=height,
+            )
+            gdal.Rasterize(strm_raster, tmp_streams, options=options)
+            self.update_hash(strm_raster, dem)
+            output.append(strm_raster)
+        if len(strms) > 1:
+            os.remove(tmp_streams)
+        return output
 
     def create_row_col_id_file(self, strm: str) -> str:
         if not strm:
             return
-        row_col_file = os.path.join(self.DATA_DIR, 'rapid_files', f"{self.DEM_NAME}__{self.STREAM_NAME}")
-        os.makedirs(row_col_file, exist_ok=True)
-        row_col_file = os.path.join(row_col_file, f"{os.path.basename(strm).split('.')[0]}__row_col_id.txt")
-        if not self.OVERWRITE and os.path.exists(row_col_file) and self.hash_match(strm, self.SIMULATION_FLOWFILE, row_col_file):
+        row_col_file = os.path.join(self.DATA_DIR, 'rapid_files', f"{os.path.basename(strm).split('strm.')[0]}row_col_id.txt")
+        if not self.OVERWRITE and os.path.exists(row_col_file) and self.hash_match(row_col_file, self.SIMULATION_FLOWFILE, strm):
             return row_col_file
 
         if self.SIMULATION_FLOWFILE.lower().endswith(('.csv', '.txt', '.nc','.nc3','.nc4')):
@@ -597,17 +644,14 @@ class AutoRouteHandler:
             .fillna(0)
             .to_csv(row_col_file, sep="\t", index=False)
         )
-        self.update_hash(strm, self.SIMULATION_FLOWFILE, row_col_file)
+        self.update_hash(row_col_file, self.SIMULATION_FLOWFILE, strm)
         return row_col_file
 
     def create_flood_flowfile(self, strm: str) -> str:
         if not strm:
             return
-        flowfile = os.path.join(self.DATA_DIR, 'flow_files', f"{self.DEM_NAME}__{self.STREAM_NAME}")
-        os.makedirs(flowfile, exist_ok=True)
-        flowfile = os.path.join(flowfile, f"{os.path.basename(strm).split('.')[0]}__flow.txt")
-        if not self.OVERWRITE and os.path.exists(flowfile) and self.hash_match(strm, self.FLOOD_FLOWFILE, flowfile):
-           # logging.info(f"{flowfile} already exists. Skipping...")
+        flowfile = os.path.join(self.DATA_DIR, 'flow_files', f"{os.path.basename(strm).split('strm.')[0]}flow.txt")
+        if not self.OVERWRITE and os.path.exists(flowfile) and self.hash_match(flowfile, self.FLOOD_FLOWFILE, strm):
             return flowfile
 
         if self.FLOOD_FLOWFILE.endswith(('.csv', '.txt')):
@@ -636,14 +680,12 @@ class AutoRouteHandler:
             df[df[id_col].isin(ids)]
             .to_csv(flowfile,index=False)
         )
-        self.update_hash(strm, self.FLOOD_FLOWFILE, flowfile)
+        self.update_hash(flowfile, self.FLOOD_FLOWFILE, strm)
         return flowfile
 
     def create_land_use(self, dem: str) -> str:
         global GEOMETRY_SAVE_EXTENSION
-        lu_file = os.path.join(self.DATA_DIR, 'land_use', f"{self.DEM_NAME}__{self.LAND_USE_NAME}")
-        os.makedirs(lu_file, exist_ok=True)
-        lu_file = os.path.join(lu_file, f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__lu.vrt")
+        lu_file = os.path.join(self.DATA_DIR, 'land_use', f"{os.path.basename(dem).split('.')[0]}__lu.vrt")
         if not self.OVERWRITE and os.path.exists(lu_file) and self.hash_match(dem, lu_file):
             return lu_file
         dem_ds = self.open_w_gdal(dem)
@@ -691,8 +733,9 @@ class AutoRouteHandler:
                 
             if self.is_in_extent(ds, (minx2, miny2, maxx2, maxy2)):
                 if ds.ReadAsArray().max() > 100:
-                    logging.error(f"Land use file {f} has values over 100. AutoRoute cannot read this. Please reclassify.")
-                    return
+                    msg = f"Land use file {f} has values over 100. AutoRoute cannot read this. Please reclassify."
+                    logging.error(msg)
+                    raise ValueError(msg)
                 files_to_use.append(f)
             ds = None
         
@@ -702,14 +745,14 @@ class AutoRouteHandler:
         
         if dem_epsg != lu_epsg:
             options = gdal.WarpOptions(
-            format='GTiff',
-            dstSRS=projection,
-            outputBounds=(minx, miny, maxx, maxy),
-            outputType=gdal.GDT_Byte,  
-            multithread=True, 
-            xRes=x_res,
-            yRes=y_res,
-            creationOptions = ["COMPRESS=DEFLATE", "PREDICTOR=2", "NUM_THREADS=ALL_CPUS"]
+                format='GTiff',
+                dstSRS=projection,
+                outputBounds=(minx, miny, maxx, maxy),
+                outputType=gdal.GDT_Byte,  
+                multithread=True, 
+                xRes=x_res,
+                yRes=y_res,
+                creationOptions = ["COMPRESS=DEFLATE", "PREDICTOR=2", "NUM_THREADS=ALL_CPUS"]
             )    
             lu_file = lu_file.replace('.vrt', '.tif')
             gdal.Warp(lu_file, files_to_use, options=options) 
@@ -745,7 +788,6 @@ class AutoRouteHandler:
         return [alist[x:x+n] for x in range(0, len(alist), n)]
     
     def crop(self, dem: str) -> str:
-        os.makedirs(os.path.join(self.DATA_DIR, 'dems',self.DEM_NAME), exist_ok=True)
         ds = self.open_w_gdal(dem)
         if not ds:
             logging.warning(f'Could not open {dem}. Skipping...')
@@ -761,12 +803,12 @@ class AutoRouteHandler:
         maxx = min(maxx, self.EXTENT[2])
         maxy = min(maxy, self.EXTENT[3])
 
-        cropped_dem = os.path.join(self.DATA_DIR, 'dems', self.DEM_NAME, self.create_fname(minx, miny, maxx, maxy, append='_crop'))
+        cropped_dem = os.path.join(self.DATA_DIR, 'dems', 'cropped', os.path.splitext(os.path.basename(dem))[0] + '_crop.tif')
         if not self.OVERWRITE and os.path.exists(cropped_dem) and self.hash_match(dem, cropped_dem):
             #logging.info(f"{cropped_dem} already exists. Skipping...")
             return
 
-        vrt_options = gdal.BuildVRTOptions(resampleAlg='lanczos',
+        vrt_options = gdal.BuildVRTOptions(resampleAlg='nearest',
                                         outputSRS=projection,
                                         srcNodata=no_data_value,
                                         outputBounds=(minx, miny, maxx, maxy))
@@ -775,295 +817,288 @@ class AutoRouteHandler:
         return cropped_dem
             
     def create_mifn_file(self, dem: str, strm: str, lu: str, rapid_flow_file: str, flowfile: str) -> str:
+        """
+        We always make a new main input file for every run. They are cheap to make and we don't want to accidentally keep one 
+        that needs to be overwritten.
+        """
         # Format path strings
-        if not dem or not strm or not rapid_flow_file or not flowfile:
-            return
-        dem = self._format_files(dem)
+        dem = self._format_path(dem)
         if not os.path.isabs(dem):
             dem = os.path.abspath(dem)
-        mifn = os.path.join(self.DATA_DIR, 'mifns', f"{self.DEM_NAME}__{self.STREAM_NAME}")
-        os.makedirs(mifn, exist_ok=True)
-        mifn = os.path.join(mifn, f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__mifn.txt")
+        mifn = os.path.join(self.DATA_DIR, 'mifns', f"{os.path.basename(dem).split('.')[0]}__mifn.txt")
         
-        if not self.OVERWRITE and os.path.exists(mifn):
-            contents = open(mifn, 'r').read()
-            if self.hash_match(mifn, contents):
-                return mifn
-        
-        meta_file = os.path.join(self.DATA_DIR, 'meta_files', f"{self.DEM_NAME}__{self.STREAM_NAME}")
-        os.makedirs(meta_file, exist_ok=True)
-        meta_file = os.path.join(meta_file, f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__meta.txt")
+        meta_file = os.path.join(self.DATA_DIR, 'meta_files', f"{os.path.basename(dem).split('.')[0]}__meta.txt")
 
-        with open(mifn, 'w') as f:
-            self._warn_DNE('DEM', dem)
-            self._check_type('DEM', dem, ['.tif','.vrt'])
-            self._write(f,'DEM_File',dem)
+        output = []
+        self._warn_DNE('DEM', dem)
+        self._check_type('DEM', dem, ['.tif','.vrt'])
+        self._write(output,'DEM_File',dem)
 
-            f.write('\n')
-            self._write(f,'# AutoRoute Inputs')
-            f.write('\n')
+        output.append('\n')
+        self._write(output,'# AutoRoute Inputs')
+        output.append('\n')
 
-            if strm:
-                strm = self._format_files(strm)
-                self._warn_DNE('Stream File', strm)
-                self._check_type('Stream Fil', strm, ['.tif', '.vrt'])
-                self._write(f,'Stream_File',strm)
+        if strm:
+            strm = self._format_path(strm)
+            self._warn_DNE('Stream File', strm)
+            self._check_type('Stream Fil', strm, ['.tif', '.vrt'])
+            self._write(output,'Stream_File',strm)
 
-            # Open DEM to see if projected or geographic units
-            ds = gdal.Open(dem)
-            srs = osr.SpatialReference(wkt=ds.GetProjection())
-            nrows = ds.RasterYSize
-            ds = None
-            if srs.IsProjected():
-                units = srs.GetLinearUnitsName().lower()
-                if "meter" in units:
-                    if "k" in units:
-                        self._write(f,'Spatial_Units',"km")
-                    else:
-                        self._write(f,'Spatial_Units',"m")
+        # Open DEM to see if projected or geographic units
+        ds = gdal.Open(dem)
+        srs = osr.SpatialReference(wkt=ds.GetProjection())
+        nrows = ds.RasterYSize
+        ds = None
+        if srs.IsProjected():
+            units = srs.GetLinearUnitsName().lower()
+            if "meter" in units:
+                if "k" in units:
+                    self._write(output,'Spatial_Units',"km")
                 else:
-                    raise ValueError(f"Unsupported units: {units}")
+                    self._write(output,'Spatial_Units',"m")
             else:
-                units = srs.GetAngularUnitsName().lower()
-                if "degree" in units:
-                    self._write(f,'Spatial_Units',"deg")
-                else:
-                    raise ValueError(f"Unsupported units: {units}")
+                raise ValueError(f"Unsupported units: {units}")
+        else:
+            units = srs.GetAngularUnitsName().lower()
+            if "degree" in units:
+                self._write(output,'Spatial_Units',"deg")
+            else:
+                raise ValueError(f"Unsupported units: {units}")
 
-            if rapid_flow_file:
-                rapid_flow_file = self._format_files(rapid_flow_file)
-                self._warn_DNE('Flow File', rapid_flow_file)
-                self._check_type('Flow File', rapid_flow_file, ['.txt'])
+        if rapid_flow_file:
+            rapid_flow_file = self._format_path(rapid_flow_file)
+            self._warn_DNE('Flow File', rapid_flow_file)
+            self._check_type('Flow File', rapid_flow_file, ['.txt'])
+            if self.USE_PYTHON:
+                self._write(output,'Flow_File',rapid_flow_file)
+            else:
+                self._write(output,'Flow_RAPIDFile',rapid_flow_file)
+
+            self._write(output,'RowCol_From_RAPIDFile')
+            if not self.SIMULATION_ID_COLUMN:
+                logging.warning('Flow ID is not specified!!')
+            else:
                 if self.USE_PYTHON:
-                    self._write(f,'Flow_File',rapid_flow_file)
+                    self._write(output,'Flow_File_ID',self.SIMULATION_ID_COLUMN)
                 else:
-                    self._write(f,'Flow_RAPIDFile',rapid_flow_file)
-
-                self._write(f,'RowCol_From_RAPIDFile')
-                if not self.SIMULATION_ID_COLUMN:
-                    logging.warning('Flow ID is not specified!!')
+                    self._write(output,'RAPID_Flow_ID', self.SIMULATION_ID_COLUMN)
+            if not self.SIMULATION_FLOW_COLUMN:
+                logging.warning('Flow Params are not specified!!')
+            else:
+                if not isinstance(self.SIMULATION_FLOW_COLUMN, list):
+                    self.SIMULATION_FLOW_COLUMN = [self.SIMULATION_FLOW_COLUMN]
+                self._write(output,'RAPID_Flow_Param', " ".join(self.SIMULATION_FLOW_COLUMN))
+            if self.RAPID_Subtract_BaseFlow:
+                if not self.BASE_FLOW_COLUMN:
+                    logging.warning('Base Flow Parameter is not specified, not subtracting baseflow')
                 else:
                     if self.USE_PYTHON:
-                        self._write(f,'Flow_File_ID',self.SIMULATION_ID_COLUMN)
+                        self._write(output,'Flow_File_BF',self.BASE_FLOW_COLUMN)
                     else:
-                        self._write(f,'RAPID_Flow_ID', self.SIMULATION_ID_COLUMN)
-                if not self.SIMULATION_FLOW_COLUMN:
-                    logging.warning('Flow Params are not specified!!')
-                else:
-                    if not isinstance(self.SIMULATION_FLOW_COLUMN, list):
-                        self.SIMULATION_FLOW_COLUMN = [self.SIMULATION_FLOW_COLUMN]
-                    self._write(f,'RAPID_Flow_Param', " ".join(self.SIMULATION_FLOW_COLUMN))
-                if self.RAPID_Subtract_BaseFlow:
-                    if not self.BASE_FLOW_COLUMN:
-                        logging.warning('Base Flow Parameter is not specified, not subtracting baseflow')
-                    else:
-                        if self.USE_PYTHON:
-                            self._write(f,'Flow_File_BF',self.BASE_FLOW_COLUMN)
-                        else:
-                            self._write(f,'RAPID_BaseFlow_Param',self.BASE_FLOW_COLUMN)
-                        self._write(f,'RAPID_Subtract_BaseFlow')
+                        self._write(output,'RAPID_BaseFlow_Param',self.BASE_FLOW_COLUMN)
+                    self._write(output,'RAPID_Subtract_BaseFlow')
 
+        if self.VDT:
+            vdt = os.path.join(self._format_path(self.VDT), f"{os.path.basename(dem).split('.')[0]}__vdt.txt")
+            if not os.path.isabs(vdt):
+                vdt = os.path.abspath(vdt)
+        else:
+            vdt = os.path.join(self.DATA_DIR, 'vdts', f"{os.path.basename(dem).split('.')[0]}__vdt.txt")
+        if self.USE_PYTHON:
             if self.VDT:
-                vdt = os.path.join(self._format_files(self.VDT), f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__vdt.txt")
+                curve_file = os.path.join(self._format_path(self.VDT), f"{os.path.basename(dem).split('.')[0]}__curve.txt")
                 if not os.path.isabs(vdt):
                     vdt = os.path.abspath(vdt)
             else:
-                vdt = os.path.join(self.DATA_DIR, 'vdts', f"{self.DEM_NAME}__{self.STREAM_NAME}")
-                os.makedirs(vdt, exist_ok=True)
-                vdt = os.path.join(vdt, f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__vdt.txt")
-            if self.USE_PYTHON:
-                if self.VDT:
-                    curve_file = os.path.join(self._format_files(self.VDT), f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__curve.txt")
-                else:
-                    curve_file = os.path.join(self.DATA_DIR, 'curves', f"{self.DEM_NAME}__{self.STREAM_NAME}", f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__curve.txt")
-                self._write(f,'Print_Curve_File',curve_file)    
-                
-            self._write(f,'Print_VDT_Database',vdt)
-            self._write(f,'Print_VDT_Database_NumIterations',self.num_iterations)
-
-            meta_file = self._format_files(meta_file)
-            self._write(f,'Meta_File',meta_file)
-
-            if self.convert_cfs_to_cms: self._write(f,'CONVERT_Q_CFS_TO_CMS')
-
-            self._write(f,'X_Section_Dist',self.x_distance)
-            self._write(f,'Q_Limit',self.q_limit)
-            self._write(f,'Gen_Dir_Dist',self.direction_distance)
-            self._write(f,'Gen_Slope_Dist',self.slope_distance)
-            if self.weight_angles:
-                self._write(f,'Weight_Angles',self.weight_angles)
-            if self.use_prev_d_4_xs == 0:
-                self._write(f,'Use_Prev_D_4_XS',0)
-            elif self.use_prev_d_4_xs != 1:
-                logging.warning('Use_Prev_D_4_XS must be 0 or 1. Will use AutoRoute\'s default value of 1')
-            self._write(f,'ADJUST_FLOW_BY_FRACTION',self.adjust_flow)
-            if self.Str_Limit_Val: self._write(f,'Str_Limit_Val',self.Str_Limit_Val)
-            if not math.isinf(self.UP_Str_Limit_Val) and self.UP_Str_Limit_Val > 0: self._write(f,'UP_Str_Limit_Val',self.UP_Str_Limit_Val)
-            if self.row_start: self._write(f,'Layer_Row_Start',self.row_start)
-            if self.row_end < nrows and self.row_end > 0: self._write(f,'Layer_Row_End',self.row_end)
-
-            if self.degree_manip > 0 and self.degree_interval > 0:
-                self._write(f,'Degree_Manip',self.degree_manip)
-                self._write(f,'Degree_Interval',self.degree_interval)
-
-            if lu:
-                lu_raster = self._format_files(lu)
-                self._warn_DNE('Land Use', lu_raster)
-                self._check_type('Land Use', lu_raster, ['.tif', '.vrt'])
-                self._write(f,'LU_Raster_SameRes',lu_raster)
-                if not self.MANNINGS_TABLE:
-                    logging.warning('No mannings table for the Land Use raster!')
-                else:
-                    if not os.path.isabs(self.MANNINGS_TABLE):
-                        self.MANNINGS_TABLE = os.path.abspath(self.MANNINGS_TABLE)
-                    mannings_table = self._format_files(self.MANNINGS_TABLE)
-                    self._write(f,'LU_Manning_n',mannings_table)
-            else:
-                self._write(f,'Man_n',self.man_n)
-
-            if self.low_spot_distance is not None:
-                if self.low_spot_is_meters:
-                    self._write(f,'Low_Spot_Dist_m',self.low_spot_distance)
-                else:
-                    self._write(f,'Low_Spot_Range',self.low_spot_distance)
-                if self.low_spot_use_box:
-                    self._write(f,'Low_Spot_Range_Box')
-                    self._write(f,'Low_Spot_Range_Box_Size',self.box_size)
+                curve_file = os.path.join(self.DATA_DIR, 'curves', f"{os.path.basename(dem).split('.')[0]}__curve.txt")
+            self._write(output,'Print_Curve_File',curve_file)    
             
-            if self.find_flat:
-                self._write(f,'Low_Spot_Find_Flat')
-                if self.low_spot_find_flat_cutoff < float('inf'):
-                    self._write(f,'Low_Spot_Range_FlowCutoff',self.low_spot_find_flat_cutoff)
+        self._write(output,'Print_VDT_Database',vdt)
+        self._write(output,'Print_VDT_Database_NumIterations',self.num_iterations)
 
-            if self.run_bathymetry:
-                self._write(f,'Bathymetry')
-                if self.ar_bathy_file:
-                    if not os.path.isabs(self.ar_bathy_file):
-                        self.ar_bathy_file = os.path.abspath(self.ar_bathy_file)
-                    os.makedirs(self.ar_bathy_file, exist_ok=True)
-                    bathy_file = os.path.join(self.ar_bathy_file, f"{os.path.basename(dem).split('.')[0]}__ar_bathy.tif")
-                else:
-                    bathy_file = os.path.join(self.DATA_DIR, 'bathymetry', f"{self.DEM_NAME}__{self.STREAM_NAME}")
-                    os.makedirs(bathy_file, exist_ok=True)
-                    bathy_file = os.path.join(bathy_file, f"{os.path.basename(dem).split('.')[0]}__ar_bathy.tif")
-                if self.AUTOROUTE_PYTHON_MAIN:
-                    self._write(f,'BATHY_Out_File',bathy_file)
-                else:
-                    self._write(f,'BATHY_Out_File',bathy_file)
-                self._write(f,'Bathymetry_Alpha',self.bathy_alpha)
-                
+        meta_file = self._format_path(meta_file)
+        self._write(output,'Meta_File',meta_file)
 
-                if self.bathy_method == 'Parabolic':
-                    self._write(f,'Bathymetry_Method',0)
-                elif self.bathy_method == 'Left Bank Quadratic':
-                    self._write(f,'Bathymetry_Method', 1)
-                    self._write(f,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
-                    self._write(f,'Bathymetry_YShallow',self.bathy_y_shallow)
-                elif self.bathy_method == 'Right Bank Quadratic':
-                    self._write(f,'Bathymetry_Method', 2)
-                    self._write(f,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
-                    self._write(f,'Bathymetry_YShallow',self.bathy_y_shallow)
-                elif self.bathy_method == 'Double Quadratic':
-                    self._write(f,'Bathymetry_Method', 3)
-                    self._write(f,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
-                    self._write(f,'Bathymetry_YShallow',self.bathy_y_shallow)
-                elif self.bathy_method == 'Trapezoidal':
-                    self._write(f,'Bathymetry_Method', 4)
-                    self._write(f,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
-                else: self._write(f,'Bathymetry_Method', 5)
+        if self.convert_cfs_to_cms: self._write(output,'CONVERT_Q_CFS_TO_CMS')
 
-            if self.da_flow_param: self._write(f, 'RAPID_DA_or_Flow_Param',self.da_flow_param)
+        self._write(output,'X_Section_Dist',self.x_distance)
+        self._write(output,'Q_Limit',self.q_limit)
+        self._write(output,'Gen_Dir_Dist',self.direction_distance)
+        self._write(output,'Gen_Slope_Dist',self.slope_distance)
+        if self.weight_angles:
+            self._write(output,'Weight_Angles',self.weight_angles)
+        if self.use_prev_d_4_xs == 0:
+            self._write(output,'Use_Prev_D_4_XS',0)
+        elif self.use_prev_d_4_xs != 1:
+            logging.warning('Use_Prev_D_4_XS must be 0 or 1. Will use AutoRoute\'s default value of 1')
+        self._write(output,'ADJUST_FLOW_BY_FRACTION',self.adjust_flow)
+        if self.Str_Limit_Val: self._write(output,'Str_Limit_Val',self.Str_Limit_Val)
+        if not math.isinf(self.UP_Str_Limit_Val) and self.UP_Str_Limit_Val > 0: self._write(output,'UP_Str_Limit_Val',self.UP_Str_Limit_Val)
+        if self.row_start: self._write(output,'Layer_Row_Start',self.row_start)
+        if self.row_end < nrows and self.row_end > 0: self._write(output,'Layer_Row_End',self.row_end)
 
-            f.write('\n')
-            self._write(f,'# FloodSpreader Inputs')
-            f.write('\n')
+        if self.degree_manip > 0 and self.degree_interval > 0:
+            self._write(output,'Degree_Manip',self.degree_manip)
+            self._write(output,'Degree_Interval',self.degree_interval)
 
-            if flowfile:
-                id_flow_file = self._format_files(flowfile)
-                self._warn_DNE('ID Flow File', id_flow_file)
-                self._check_type('ID Flow File', id_flow_file, ['.txt','.csv'])
-                self._write(f,'Comid_Flow_File',id_flow_file)
+        if lu:
+            lu_raster = self._format_path(lu)
+            self._warn_DNE('Land Use', lu_raster)
+            self._check_type('Land Use', lu_raster, ['.tif', '.vrt'])
+            self._write(output,'LU_Raster_SameRes',lu_raster)
+            if not self.MANNINGS_TABLE:
+                logging.warning('No mannings table for the Land Use raster!')
+            else:
+                if not os.path.isabs(self.MANNINGS_TABLE):
+                    self.MANNINGS_TABLE = os.path.abspath(self.MANNINGS_TABLE)
+                mannings_table = self._format_path(self.MANNINGS_TABLE)
+                self._write(output,'LU_Manning_n',mannings_table)
+        else:
+            self._write(output,'Man_n',self.man_n)
 
-            if self.omit_outliers:
-                if self.omit_outliers == 'Flood Bad Cells':
-                    self._write(f,'Flood_BadCells')
-                elif self.omit_outliers == 'Use AutoRoute Depths':
-                    self._write(f,'FloodSpreader_Use_AR_Depths')
-                elif self.omit_outliers == 'Smooth Water Surface Elevation':
-                    self._write(f,'FloodSpreader_SmoothWSE')
-                    self._write(f,'FloodSpreader_SmoothWSE_SearchDist',self.wse_search_dist)
-                    self._write(f,'FloodSpreader_SmoothWSE_FractStDev',self.wse_threshold)
-                    if self.wse_remove_three:
-                        self._write(f,'FloodSpreader_SmoothWSE_RemoveHighThree')
-                elif self.omit_outliers == 'Use AutoRoute Depths (StDev)':
-                    self._write(f,'FloodSpreader_Use_AR_Depths_StDev')
-                elif self.omit_outliers == 'Specify Depth' and self.specify_depth:
-                    self._write(f,'FloodSpreader_SpecifyDepth',self.specify_depth)
-                else:
-                    logging.warning(f'Unknown outlier omission option: {self.omit_outliers}')
+        if self.low_spot_distance is not None:
+            if self.low_spot_is_meters:
+                self._write(output,'Low_Spot_Dist_m',self.low_spot_distance)
+            else:
+                self._write(output,'Low_Spot_Range',self.low_spot_distance)
+            if self.low_spot_use_box:
+                self._write(output,'Low_Spot_Range_Box')
+                self._write(output,'Low_Spot_Range_Box_Size',self.box_size)
+        
+        if self.find_flat:
+            self._write(output,'Low_Spot_Find_Flat')
+            if self.low_spot_find_flat_cutoff < float('inf'):
+                self._write(output,'Low_Spot_Range_FlowCutoff',self.low_spot_find_flat_cutoff)
 
-            if self.twd_factor != 1.5:
-                self._write(f,'TopWidthDistanceFactor',self.twd_factor)
-            if self.only_streams: self._write(f,'FloodSpreader_JustStrmDepths')
-            if self.use_ar_top_widths: self._write(f,'FloodSpreader_Use_AR_TopWidth')
-            if self.flood_local: self._write(f,'FloodLocalOnly')
+        if self.run_bathymetry:
+            self._write(output,'Bathymetry')
+            if self.ar_bathy_file:
+                if not os.path.isabs(self.ar_bathy_file):
+                    self.ar_bathy_file = os.path.abspath(self.ar_bathy_file)
+                os.makedirs(self.ar_bathy_file, exist_ok=True)
+                bathy_file = os.path.join(self.ar_bathy_file, f"{os.path.basename(dem).split('.')[0]}__ar_bathy.tif")
+            else:
+                bathy_file = os.path.join(self.DATA_DIR, 'bathymetry', f"{os.path.basename(dem).split('.')[0]}__ar_bathy.tif")
+            if self.AUTOROUTE_PYTHON_MAIN:
+                self._write(output,'BATHY_Out_File',bathy_file)
+            else:
+                self._write(output,'BATHY_Out_File',bathy_file)
+            self._write(output,'Bathymetry_Alpha',self.bathy_alpha)
+            
 
-            if self.DEPTH_MAP:
-                self.DEPTH_MAP = self._format_files(self.DEPTH_MAP)
-                os.makedirs(self.DEPTH_MAP, exist_ok=True)
-                if not os.path.isabs(self.DEPTH_MAP):
-                    self.DEPTH_MAP = os.path.abspath(self.DEPTH_MAP)
-                depth_map = self._format_files(os.path.join(self.DEPTH_MAP, f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__depth.tif"))
-                if self.OVERWRITE or not os.path.exists(depth_map):
-                    self._check_type('Depth Map',depth_map,['.tif'])
-                    self._write(f,'OutDEP',depth_map)
+            if self.bathy_method == 'Parabolic':
+                self._write(output,'Bathymetry_Method',0)
+            elif self.bathy_method == 'Left Bank Quadratic':
+                self._write(output,'Bathymetry_Method', 1)
+                self._write(output,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
+                self._write(output,'Bathymetry_YShallow',self.bathy_y_shallow)
+            elif self.bathy_method == 'Right Bank Quadratic':
+                self._write(output,'Bathymetry_Method', 2)
+                self._write(output,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
+                self._write(output,'Bathymetry_YShallow',self.bathy_y_shallow)
+            elif self.bathy_method == 'Double Quadratic':
+                self._write(output,'Bathymetry_Method', 3)
+                self._write(output,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
+                self._write(output,'Bathymetry_YShallow',self.bathy_y_shallow)
+            elif self.bathy_method == 'Trapezoidal':
+                self._write(output,'Bathymetry_Method', 4)
+                self._write(output,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
+            else: self._write(output,'Bathymetry_Method', 5)
 
-            if self.FLOOD_MAP:
-                self.FLOOD_MAP = self._format_files(self.FLOOD_MAP)
-                os.makedirs(self.FLOOD_MAP, exist_ok=True)
-                if not os.path.isabs(self.FLOOD_MAP):
-                    self.FLOOD_MAP = os.path.abspath(self.FLOOD_MAP)
-                flood_map = self._format_files(os.path.join(self.FLOOD_MAP, f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__flood.tif"))
-                if self.OVERWRITE or not os.path.exists(flood_map):
-                    self._check_type('Flood Map',flood_map,['.tif'])
-                    self._write(f,'OutFLD',flood_map)
+        if self.da_flow_param: self._write(output, 'RAPID_DA_or_Flow_Param',self.da_flow_param)
 
-            if self.VELOCITY_MAP:
-                self.VELOCITY_MAP = self._format_files(self.VELOCITY_MAP)
-                os.makedirs(self.VELOCITY_MAP, exist_ok=True)
-                if not os.path.isabs(self.VELOCITY_MAP):
-                    self.VELOCITY_MAP = os.path.abspath(self.VELOCITY_MAP)
-                velocity_map = self._format_files(os.path.join(self.VELOCITY_MAP, f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__vel.tif"))
-                if self.OVERWRITE or not os.path.exists(velocity_map):
-                    self._check_type('Velocity Map',velocity_map,['.tif'])
-                    self._write(f,'OutVEL',velocity_map)
+        output.append('\n')
+        self._write(output,'# FloodSpreader Inputs')
+        output.append('\n')
 
-            if self.WSE_MAP:
-                self.WSE_MAP = self._format_files(self.WSE_MAP)
-                os.makedirs(self.WSE_MAP, exist_ok=True)
-                if not os.path.isabs(self.WSE_MAP):
-                    self.WSE_MAP = os.path.abspath(self.WSE_MAP)
-                wse_map = self._format_files(os.path.join(self.WSE_MAP, f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__wse.tif"))
-                if self.OVERWRITE or not os.path.exists(wse_map):
-                    self._check_type('WSE Map',wse_map,['.tif'])
-                    self._write(f,'OutWSE',wse_map)
+        if flowfile:
+            id_flow_file = self._format_path(flowfile)
+            self._warn_DNE('ID Flow File', id_flow_file)
+            self._check_type('ID Flow File', id_flow_file, ['.txt','.csv'])
+            self._write(output,'Comid_Flow_File',id_flow_file)
 
-            if self.run_bathymetry and self.fs_bathy_file: 
-                os.makedirs(self.fs_bathy_file, exist_ok=True)
-                if not os.path.isabs(self.fs_bathy_file):
-                    self.fs_bathy_file = os.path.abspath(self.fs_bathy_file)
-                fs_bathy_file = os.path.join(self._format_files(self.fs_bathy_file), f"{os.path.basename(dem).split('.')[0]}__fs_bathy.tif")
-                self._write(f,'FSOutBATHY', fs_bathy_file)
-                if self.fs_bathy_smooth_method == 'Linear Interpolation':
-                    self._write(f,'Bathy_LinearInterpolation')
-                elif self.fs_bathy_smooth_method == 'Inverse-Distance Weighted':
-                    self._write(f,'BathyTopWidthDistanceFactor', self.bathy_twd_factor)
+        if self.omit_outliers:
+            if self.omit_outliers == 'Flood Bad Cells':
+                self._write(output,'Flood_BadCells')
+            elif self.omit_outliers == 'Use AutoRoute Depths':
+                self._write(output,'FloodSpreader_Use_AR_Depths')
+            elif self.omit_outliers == 'Smooth Water Surface Elevation':
+                self._write(output,'FloodSpreader_SmoothWSE')
+                self._write(output,'FloodSpreader_SmoothWSE_SearchDist',self.wse_search_dist)
+                self._write(output,'FloodSpreader_SmoothWSE_FractStDev',self.wse_threshold)
+                if self.wse_remove_three:
+                    self._write(output,'FloodSpreader_SmoothWSE_RemoveHighThree')
+            elif self.omit_outliers == 'Use AutoRoute Depths (StDev)':
+                self._write(output,'FloodSpreader_Use_AR_Depths_StDev')
+            elif self.omit_outliers == 'Specify Depth' and self.specify_depth:
+                self._write(output,'FloodSpreader_SpecifyDepth',self.specify_depth)
+            else:
+                logging.warning(f'Unknown outlier omission option: {self.omit_outliers}')
 
-        contents = open(mifn, 'r').read()
-        self.update_hash(mifn, contents)
+        if self.twd_factor != 1.5:
+            self._write(output,'TopWidthDistanceFactor',self.twd_factor)
+        if self.only_streams: self._write(output,'FloodSpreader_JustStrmDepths')
+        if self.use_ar_top_widths: self._write(output,'FloodSpreader_Use_AR_TopWidth')
+        if self.flood_local: self._write(output,'FloodLocalOnly')
+
+        if self.DEPTH_MAP:
+            self.DEPTH_MAP = self._format_path(self.DEPTH_MAP)
+            os.makedirs(self.DEPTH_MAP, exist_ok=True)
+            if not os.path.isabs(self.DEPTH_MAP):
+                self.DEPTH_MAP = os.path.abspath(self.DEPTH_MAP)
+            depth_map = self._format_path(os.path.join(self.DEPTH_MAP, f"{os.path.basename(dem).split('.')[0]}__depth.tif"))
+            if self.OVERWRITE or not os.path.exists(depth_map):
+                self._check_type('Depth Map',depth_map,['.tif'])
+                self._write(output,'OutDEP',depth_map)
+
+        if self.FLOOD_MAP:
+            self.FLOOD_MAP = self._format_path(self.FLOOD_MAP)
+            os.makedirs(self.FLOOD_MAP, exist_ok=True)
+            if not os.path.isabs(self.FLOOD_MAP):
+                self.FLOOD_MAP = os.path.abspath(self.FLOOD_MAP)
+            flood_map = self._format_path(os.path.join(self.FLOOD_MAP, f"{os.path.basename(dem).split('.')[0]}__flood.tif"))
+            if self.OVERWRITE or not os.path.exists(flood_map):
+                self._check_type('Flood Map',flood_map,['.tif'])
+                self._write(output,'OutFLD',flood_map)
+
+        if self.VELOCITY_MAP:
+            self.VELOCITY_MAP = self._format_path(self.VELOCITY_MAP)
+            os.makedirs(self.VELOCITY_MAP, exist_ok=True)
+            if not os.path.isabs(self.VELOCITY_MAP):
+                self.VELOCITY_MAP = os.path.abspath(self.VELOCITY_MAP)
+            velocity_map = self._format_path(os.path.join(self.VELOCITY_MAP, f"{os.path.basename(dem).split('.')[0]}__vel.tif"))
+            if self.OVERWRITE or not os.path.exists(velocity_map):
+                self._check_type('Velocity Map',velocity_map,['.tif'])
+                self._write(output,'OutVEL',velocity_map)
+
+        if self.WSE_MAP:
+            self.WSE_MAP = self._format_path(self.WSE_MAP)
+            os.makedirs(self.WSE_MAP, exist_ok=True)
+            if not os.path.isabs(self.WSE_MAP):
+                self.WSE_MAP = os.path.abspath(self.WSE_MAP)
+            wse_map = self._format_path(os.path.join(self.WSE_MAP, f"{os.path.basename(dem).split('.')[0]}__wse.tif"))
+            if self.OVERWRITE or not os.path.exists(wse_map):
+                self._check_type('WSE Map',wse_map,['.tif'])
+                self._write(output,'OutWSE',wse_map)
+
+        if self.run_bathymetry and self.fs_bathy_file: 
+            os.makedirs(self.fs_bathy_file, exist_ok=True)
+            if not os.path.isabs(self.fs_bathy_file):
+                self.fs_bathy_file = os.path.abspath(self.fs_bathy_file)
+            fs_bathy_file = os.path.join(self._format_path(self.fs_bathy_file), f"{os.path.basename(dem).split('.')[0]}__fs_bathy.tif")
+            self._write(output,'FSOutBATHY', fs_bathy_file)
+            if self.fs_bathy_smooth_method == 'Linear Interpolation':
+                self._write(output,'Bathy_LinearInterpolation')
+            elif self.fs_bathy_smooth_method == 'Inverse-Distance Weighted':
+                self._write(output,'BathyTopWidthDistanceFactor', self.bathy_twd_factor)
+
+        contents = "\n".join(output)
+        with open(mifn, 'w', encoding='utf-8') as f:
+            f.write(contents)
+            
         return mifn
 
-    def _format_files(self,file_path: str) -> str:
+    def _format_path(self,file_path: str) -> str:
         """
         Function added so that windows paths that pad with quotation marks can be valid
         """
@@ -1071,12 +1106,18 @@ class AutoRouteHandler:
             return file_path[1:-1]
         return file_path
         
-    def _write(self,f, Card, Argument = '') -> None:
-        if Argument:
-            f.write(f"{Card}\t{Argument}\n")
+    def _write(self, f: Union[List, TextIO], Card, Argument = '') -> None:
+        if not isinstance(f, list):
+            if Argument:
+                f.write(f"{Card}\t{Argument}\n")
+            else:
+                f.write(f"{Card}\n")
         else:
-            f.write(f"{Card}\n")
-
+            if Argument:
+                f.append(f"{Card}\t{Argument}")
+            else:
+                f.append(f"{Card}")
+            
     def _warn_DNE(self, card: str, value: str) -> None:
         if value:
             if not os.path.exists(value):
@@ -1120,14 +1161,15 @@ class AutoRouteHandler:
                     raise e
                 return
             
-            exe = self._format_files(self.AUTOROUTE.strip())
+            exe = self._format_path(self.AUTOROUTE.strip())
             if not os.path.exists(exe):
                 logging.error(f"AutoRoute executable not found: {exe}")
                 return
-            mifn = self._format_files(mifn.strip())
+            mifn = self._format_path(mifn.strip())
 
             vdt = self.get_item_from_mifn(mifn, key='Print_VDT_Database')
-            if not self.OVERWRITE and vdt and os.path.exists(vdt) and self.hash_match(mifn, vdt):
+            contents = open(vdt).read()
+            if not self.OVERWRITE and vdt and os.path.exists(vdt) and self.hash_match(vdt, contents):
                 return
 
             process = subprocess.run(f'conda activate {self.AUTOROUTE_CONDA_ENV} && echo "a" | {exe} {mifn}', # We echo a dummy input in so that AutoRoute can terminate if some input is wrong
@@ -1145,19 +1187,19 @@ class AutoRouteHandler:
             elif process.returncode != 0:
                 logging.error(f"Error running AutoRoute: {process.stderr.decode('utf-8')}")
 
-            self.update_hash(mifn, vdt)
+            self.update_hash(vdt, contents)
             return process.stdout.decode('utf-8') + process.stderr.decode('utf-8')
         except Exception as e:
             logging.error(f"Error running autoroute: {e}")
 
     def run_floodspreader(self, mifn: str) -> None:
         try:
-            exe = self._format_files(self.FLOODSPREADER.strip())
+            exe = self._format_path(self.FLOODSPREADER.strip())
             if not os.path.exists(exe):
                 logging.error(f"FloodSpreader executable not found: {exe}")
                 return
             
-            mifn = self._format_files(mifn.strip())
+            mifn = self._format_path(mifn.strip())
 
             fld_map = self.get_item_from_mifn(mifn, key='OutFLD')
             dep_map = self.get_item_from_mifn(mifn, key='OutDEP')
@@ -1227,40 +1269,36 @@ class AutoRouteHandler:
             ar_bathy = self.get_item_from_mifn(mifn, key='BATHY_Out_File')
             maps = {fld_map, dep_map, vel_map, wse_map, fs_bathy, ar_bathy} - {""}
             for m in maps:
-                if os.path.exists(m):
-                    if self.hash_match(m):
-                        continue # Skip unmodified files
-                    ds = gdal.Open(m)
-                    geotransform = ds.GetGeoTransform()
-                    projection = ds.GetProjection()
-                    array = ds.ReadAsArray()
-                    ds = None
+                if not os.path.exists(m) or self.hash_match(m):
+                    continue # Skip unmodified files and files that don't exist
+                
+                ds = gdal.Open(m)
+                geotransform = ds.GetGeoTransform()
+                projection = ds.GetProjection()
+                array = ds.ReadAsArray()
+                ds = None
 
-                    noData = 0
-                    if 'flood' in os.path.basename(m):
-                        type = gdal.GDT_Byte
-                        predictor = 2       
-                    else:
-                        type = gdal.GDT_Float32
-                        predictor = 3
-                        if 'wse' in os.path.basename(m) or 'bathy' in os.path.basename(m):
-                            noData = -9999
+                noData = 0
+                if 'flood' in os.path.basename(m):
+                    type = gdal.GDT_Byte
+                    predictor = 2       
+                else:
+                    type = gdal.GDT_Float32
+                    predictor = 3
+                    if 'wse' in os.path.basename(m) or 'bathy' in os.path.basename(m):
+                        noData = -9999
 
-                    # Delete the file and resave
-                    os.remove(m)
-                    driver: gdal.Driver = gdal.GetDriverByName('GTiff')
-                    ds: gdal.Dataset = driver.Create(m, 
-                                       array.shape[1], 
-                                       array.shape[0], 
-                                       1, 
-                                       type, 
-                                       options=["COMPRESS=DEFLATE", f"PREDICTOR={predictor}"])
-                    ds.SetGeoTransform(geotransform)
-                    ds.SetProjection(projection)
-                    ds.GetRasterBand(1).WriteArray(array)
-                    ds.GetRasterBand(1).SetNoDataValue(noData)
-                    ds = None
-                    self.update_hash(m)
+                # Delete the file and resave
+                os.remove(m)
+                driver: gdal.Driver = gdal.GetDriverByName('GTiff')
+                ds: gdal.Dataset = driver.Create(m, array.shape[1], array.shape[0], 1, 
+                                                    type, options=["COMPRESS=DEFLATE", f"PREDICTOR={predictor}"])
+                ds.SetGeoTransform(geotransform)
+                ds.SetProjection(projection)
+                ds.GetRasterBand(1).WriteArray(array)
+                ds.GetRasterBand(1).SetNoDataValue(noData)
+                ds = None
+                self.update_hash(m)
         except Exception as e:
             logging.error(f"Error cleaning outputs: {e}")
 
@@ -1285,10 +1323,10 @@ class AutoRouteHandler:
         return hashlib.blake2b(string.encode()).hexdigest()
     
     def hash_match(self, file: str, *args) -> bool:
-        return self._hash(file, *args) == _file_hash_dict.get(self.create_key(file), '')
+        return self._hash(file, *args) == self._file_hash_dict.get(self.create_key(file), '')
     
     def update_hash(self, file: str, *args) -> None:
-        _file_hash_dict[self.create_key(file)] = self._hash(file, *args)
+        self._file_hash_dict[self.create_key(file)] = self._hash(file, *args)
         
     def create_key(self, *args):
         string = []
@@ -1299,4 +1337,60 @@ class AutoRouteHandler:
             string.append(str(arg))
         return hashlib.blake2b(''.join(string).encode()).hexdigest()
       
-atexit.register(_file_hash_dict.save)
+    def map_dems_and_streams(self, dems: List[str]):
+        """
+        The purpose of this function is to find what dems and streams intersect with each other.
+        We want any dems that are wholly contained in one stream file to be associated with that file.
+        Any dems that need two of the same stream files should be associated with that file.
+        And so on...
+        """
+        if os.path.isdir(self.STREAM_NETWORK_FOLDER):
+            streams = [os.path.join(self.STREAM_NETWORK_FOLDER,f) for f in os.listdir(self.STREAM_NETWORK_FOLDER) if f.endswith(('.shp', '.gpkg', '.parquet', '.geoparquet'))]
+        else:
+            streams = [self.STREAM_NETWORK_FOLDER]
+        if not streams:
+            msg = f"No stream files found in {self.STREAM_NETWORK_FOLDER}"
+            logging.error(msg)
+            raise FileNotFoundError(msg)
+        
+        streams_list = []
+        for stream in streams:
+            with fiona.open(stream, 'r') as src:
+                crs = src.crs
+                f_extent = src.bounds
+                streams_list.append((stream, crs, f_extent))
+                
+        dems_list = []
+        for dem in dems:
+            ds = self.open_w_gdal(dem)  # Replace with your actual method to open with GDAL
+            ds_epsg = self.get_epsg(ds)  # Replace with your actual method to get EPSG
+            minx, miny, maxx, maxy = self.get_ds_extent(ds)  # Replace with your actual method to get extent
+            dems_list.append((dem, ds_epsg, (minx, miny, maxx, maxy)))
+            
+        mapping_dict = {}
+        for dem, ds_epsg, dem_extent in dems_list:
+            mapping_dict[dem] = []
+            for stream_name, crs, f_extent in streams_list:
+                minx, miny, maxx, maxy = dem_extent
+                if ds_epsg != crs.to_epsg():
+                    transformer = Transformer.from_crs(f"EPSG:{ds_epsg}", crs.to_string(), always_xy=True)
+                    minx, miny = transformer.transform(minx, miny)
+                    maxx, maxy = transformer.transform(maxx, maxy)
+                if self._isin(minx, miny, maxx, maxy, f_extent):
+                    mapping_dict[dem].append(stream_name)
+        
+        invertion = {}
+        for dem, streams in mapping_dict.items():
+            if not streams:
+                logging.warning(f"No stream files found that intersect {dem}")
+                continue
+            s = tuple(streams)
+            if s not in invertion:
+                invertion[s] = []
+            invertion[s].append(dem)
+        
+        return list(invertion.items())
+            
+    def save_hashes(self) -> None:
+        with open(self._hash_file, 'w') as f:
+            json.dump(dict(self._file_hash_dict), f, indent=4)

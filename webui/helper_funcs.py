@@ -8,9 +8,7 @@ import pandas as pd
 import geopandas as gpd
 import json
 import platform
-import asyncio
 import re
-import threading
 import sys
 import multiprocessing
 import xarray as xr
@@ -566,7 +564,7 @@ class ManagerFacade():
         df = pd.read_csv(input_path, header=header)
         
         # Save the first column as a list of IDs and remove duplicates
-        ids = df.iloc[:,0].values
+        ids = np.unique(df.iloc[:,0].values)
         
         forecast_data = geoglows.data.forecast_ensembles(ids, date=date)
         
@@ -585,3 +583,82 @@ class ManagerFacade():
         max_rows.rename(columns={'river_id': 'LINKNO'}, inplace=True)
         
         max_rows.to_csv(output_path, index=False)
+        
+    def get_median_max_forecast(self, input_path: str, output_path: str, date: str) -> None:
+        try:
+            import geoglows
+        except ImportError:
+            msg = "Please install the geoglows package to use this function. Run 'conda install geoglows' in your terminal."
+            logging.error(msg)
+            gr.Error(msg)
+            return
+        
+        if not os.path.exists(input_path):
+            msg = f"{input_path} does not exist"
+            logging.error(msg)
+            gr.Error(msg)
+            return
+        
+        if not output_path:
+            msg = "No output path specified"
+            logging.error(msg)
+            gr.Error(msg)
+            return
+        
+        if not date or not re.match(r'\d{4}\d{2}\d{2}', date):
+            msg = "Invalid date format. Please use the format 'YYYYMMDD'"
+            logging.error(msg)
+            gr.Error(msg)
+            return
+        
+        # Check if the file has a header or not
+        with open(input_path, 'r') as f:
+            first_line = f.readline()
+        if first_line[0].isdigit():
+            header = None
+        else:
+            header = 0
+        
+        # Read the CSV file
+        df = pd.read_csv(input_path, header=header)
+        
+        # Save the first column as a list of IDs and remove duplicates
+        ids = np.unique(df.iloc[:,0].values)
+        
+        logging.info(f"Getting forecast data for {len(ids)} rivers")
+        gr.Info(f"Getting forecast data for {len(ids)} rivers")
+        
+        num_to_run = min(os.cpu_count(), len(ids))
+        
+        ids_date = self.list_to_sublists(ids, num_to_run, date)
+        with multiprocessing.Pool(num_to_run) as pool:
+            max_median_flows = pool.starmap(help_get_forecast_median, ids_date)
+            
+        max_median_flows = np.array(max_median_flows).flatten()
+        
+        pd.DataFrame({'LINKNO': ids, 'max_median_flow': max_median_flows}).to_csv(output_path, index=False)
+        msg = "Finished getting forecast median flow data"
+        gr.Info(msg)
+        logging.info(msg)
+            
+    def list_to_sublists(self, alist: List, n: int, add_tuple=None) -> List:
+        if add_tuple:
+            return [(alist[x:x+n], add_tuple) for x in range(0, len(alist), n)]
+        
+        return [alist[x:x+n] for x in range(0, len(alist), n)]
+    
+def help_get_forecast_median(ids: list, date: str) -> list:
+    import geoglows
+    flows = []
+    for id in ids:
+        try:
+            data: pd.DataFrame = geoglows.data.forecast_stats(id, date)
+        except KeyError:
+            msg = f"Could not get forecast for {id}; not in the geoglows dataset"
+            logging.warning(msg)
+            gr.Warning(msg)
+            continue
+        
+        flows.append(data['flow_med'].max())
+        
+    return flows
