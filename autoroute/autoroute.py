@@ -529,6 +529,7 @@ class AutoRouteHandler:
             with fiona.open(strms[0], 'r') as src:
                 crs = src.crs
             if ds_epsg != crs.to_epsg():
+                df = self.gpd_read(strms[0], columns=[self.STREAM_ID, 'geometry'], bbox=bbox)
                 projection = self.get_projection_from_gdf(df)
                 options = gdal.RasterizeOptions(attribute=self.STREAM_ID, outputType=gdal.GDT_UInt32,
                                                 # Assume no negative IDs. DO NOT SET TO UINT64 
