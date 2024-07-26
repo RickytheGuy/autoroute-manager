@@ -50,6 +50,7 @@ if __name__ == '__main__':
                             dem_name = gr.Textbox(value=manager.default('DEM_NAME'),
                                                 placeholder='Copernicus',
                                                 label='DEM Name',
+                                                visible=False
                                                 #info=manager.default(1),
                                                 )
                         with gr.Row():
@@ -61,6 +62,7 @@ if __name__ == '__main__':
                             strm_name = gr.Textbox(value=manager.default("strm_name"), 
                                                 placeholder='Copernicus',
                                                 label='Streamlines Name',
+                                                visible=False,
                                                 #info=manager.default('DEM_NAME'),
                                                 )
                             flow_id = gr.Dropdown(value=manager.default("flow_id"),
