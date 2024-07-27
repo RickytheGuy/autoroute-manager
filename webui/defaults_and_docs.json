@@ -53,7 +53,8 @@
             "bathy_method": "The shape of the bathymtery. Default is parabolic",
             "bathy_x_max_depth": "The value associated with Bathymetry_XMaxDepth tells the model what percentage of the top width from the bank that the lowest elevation of the bathymetry profile begins (see figure below). Applies to trapezoidal, left bank quadratic, right bank quadratic, and double quadratic bathymetric profiles.",
             "bathy_y_shallow": "The shallow portion of the bathymetric profile is calculated as the maximum depth times the value associated with Bathymetry_YShallow (see figure below). Applies to left bank quadratic, right bank quadratic, and double quadratic bathymetric profiles.",
-            "id_forecast_list":"A path to a txt file (.csv, .txt, etc.) that contains a list of 'LINKNO' ids. Forecast data will be gathered for only these ids."
+            "id_forecast_list":"A path to a txt file (.csv, .txt, etc.) that contains a list of 'LINKNO' ids. Forecast data will be gathered for only these ids.",
+            "ids_to_use":"Either a path to a txt file (.csv, .txt, etc.) that contains a list of ids to use, or a single id. If a single ID is given, all subsequent downstreams will be included."
         },
         "data": {
             "DEM": "\"C:\\Users\\water\\Desktop\\WORK\\AutoRoute\\CODE_AutoRoute\\Permanent_Variables\\DEMs_for_Entire_World\"",

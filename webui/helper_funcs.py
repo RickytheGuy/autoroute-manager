@@ -14,7 +14,7 @@ import multiprocessing
 import xarray as xr
 import numpy as np
 import fiona
-from osgeo import gdal, ogr
+from osgeo import gdal
 from shapely.geometry import box
 from git import Repo
 from shapely.geometry import LineString
@@ -138,7 +138,7 @@ class ManagerFacade():
 
         order of args: 
         0. dem, dem_name, strm_lines, strm_name, lu_file, 
-        5. lu_name, base_max_file, subtract_baseflow, flow_id, flow_params, 
+        5. lu_name, base_max_file, subtract_baseflow, flow_id (streamlines_id_col), flow_params, 
         10. flow_baseflow, num_iterations,meta_file, convert_cfs_to_cms, x_distance, 
         15. q_limit, LU_Manning_n, direction_distance, slope_distance, low_spot_distance, 
         20. low_spot_is_meters,low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, 
@@ -322,7 +322,7 @@ class ManagerFacade():
         else:
             return gr.Markdown(visible=False), gr.DataFrame(visible=False), gr.Textbox(visible=False)
 
-    async def _run(self,dem, dem_name, strm_lines, strm_name, lu_file, lu_name, base_max_file, subtract_baseflow, flow_id, flow_params_ar, flow_baseflow, num_iterations,
+    async def _run(self,dem, dem_name, strm_lines, strm_name, lu_file, lu_name, base_max_file, subtract_baseflow, streamlines_id_col, flow_params_ar, flow_baseflow, num_iterations,
                                                     meta_file, convert_cfs_to_cms, x_distance, q_limit, mannings_table, direction_distance, slope_distance, low_spot_distance, low_spot_is_meters,
                                                     low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, degree_manip, degree_interval, Str_Limit_Val, UP_Str_Limit_Val, row_start, row_end, use_prev_d_4_xs,
                                                     weight_angles, man_n, adjust_flow, bathy_alpha, ar_bathy, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
@@ -344,10 +344,10 @@ class ManagerFacade():
                   "DEM_NAME": dem_name,
                   "STREAM_NETWORK_FOLDER": self._format_files(strm_lines),
                   "STREAM_NAME": strm_name,
-                  "STREAM_ID": flow_id,
+                  "STREAM_ID": streamlines_id_col,
                   "SIMULATION_FLOWFILE": self._format_files(base_max_file),
                   "FLOOD_FLOWFILE":self._format_files(id_flow_file),
-                  "SIMULATION_ID_COLUMN": flow_id,
+                  "SIMULATION_ID_COLUMN": streamlines_id_col,
                   "SIMULATION_FLOW_COLUMN": flow_params_ar,
                   "BASE_FLOW_COLUMN": flow_baseflow,
                   "EXTENT": extent,
@@ -611,16 +611,8 @@ class ManagerFacade():
             gr.Error(msg)
             return
         
-        # Check if the file has a header or not
-        with open(input_path, 'r') as f:
-            first_line = f.readline()
-        if first_line[0].isdigit():
-            header = None
-        else:
-            header = 0
-        
         # Read the CSV file
-        df = pd.read_csv(input_path, header=header)
+        df = open_csv_regardless_of_header(input_path)
         
         # Save the first column as a list of IDs and remove duplicates
         ids = np.unique(df.iloc[:,0].values)
@@ -662,3 +654,50 @@ def help_get_forecast_median(ids: list, date: str) -> list:
         flows.append(data['flow_med'].max())
         
     return flows
+
+def open_csv_regardless_of_header(file_path: str) -> pd.DataFrame:
+    # Check if the file has a header or not
+    with open(file_path, 'r') as f:
+        first_line = f.readline()
+    if first_line[0].isdigit():
+        header = None
+    else:
+        header = 0
+    
+    # Read the CSV file
+    return pd.read_csv(file_path, header=header)
+        
+
+def get_selected_ids(ids_to_use: str, num_ids_to_use: int, num_upstream_branches: int, save_ids_file: str):
+    try:
+        import networkx
+    except ImportError:
+        msg = "Please install the networkx package to use this function. Run 'conda install networkx' in your terminal."
+        logging.error(msg)
+        gr.Error(msg)
+        return
+    
+    if not ids_to_use:
+        msg = "No IDs to use specified"
+        logging.error(msg)
+        gr.Error(msg)
+        return
+    
+    if os.path.isfile(ids_to_use):
+        if not os.path.exists(ids_to_use):
+            msg = f"{ids_to_use} does not exist"
+            logging.error(msg)
+            gr.Error(msg)
+            return
+        ids = open_csv_regardless_of_header(ids_to_use).iloc[:,0].values
+    else:
+        try:
+            ids = [int(i) for i in ids_to_use.split(',')]
+        except ValueError:
+            msg = "You've entered invalid IDs"
+            logging.error(msg)
+            gr.Error(msg)
+            return
+
+    # Create a networkx graph using streamlines
+    

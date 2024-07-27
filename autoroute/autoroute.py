@@ -488,58 +488,58 @@ class AutoRouteHandler:
             logging.warning(f"No stream id provided. We will try to assume that the first column is the id. If this is not the case, please provide the stream id.")
         
         tmp_streams = os.path.join(self.DATA_DIR, 'tmp', f"temp_streams_{hash(strms)}.{GEOMETRY_SAVE_EXTENSION}")
-        if len(strms) > 1:
-            try:
-                dfs = []
-                for f in strms:
-                    with fiona.open(f, 'r') as src:
-                        crs = src.crs
-                    if ds_epsg != crs.to_epsg():
-                        transformer = Transformer.from_crs(f"EPSG:{ds_epsg}", crs.to_string(), always_xy=True) 
-                        minx2, miny2 = transformer.transform(big_minx, big_miny)
-                        maxx2, maxy2 =  transformer.transform(big_maxx, big_maxy)
-                        bbox = box(minx2, miny2, maxx2, maxy2)
-                    else:
-                        bbox = box(big_minx, big_miny, big_maxx, big_maxy)
-                    try:
-                        df = self.gpd_read(f, columns=[self.STREAM_ID, 'geometry'], bbox=bbox)
-                    except NotImplementedError:
-                        logging.warning(f"Skipping unsupported file: {f}")
-                        continue
-                    except ValueError as e:
-                        logging.error(f"Cannot find {self.STREAM_ID} in {f}")
-                        raise e
-                    
-                    if not df.empty:
-                        dfs.append(df.to_crs(ds_epsg))
-                df = gpd.GeoDataFrame(pd.concat(dfs, ignore_index=True))
-                
-                if self.STREAM_ID is None or self.STREAM_ID == []:
-                    logging.info(f"Setting stream id as {df.columns[0]}")
-                    self.STREAM_ID = df.columns[0]
-                
-                if GEOMETRY_SAVE_EXTENSION == "parquet":
-                    df.to_parquet(tmp_streams)
+        # if len(strms) > 1:
+        try:
+            dfs = []
+            for f in strms:
+                with fiona.open(f, 'r') as src:
+                    crs = src.crs
+                if ds_epsg != crs.to_epsg():
+                    transformer = Transformer.from_crs(f"EPSG:{ds_epsg}", crs.to_string(), always_xy=True) 
+                    minx2, miny2 = transformer.transform(big_minx, big_miny)
+                    maxx2, maxy2 =  transformer.transform(big_maxx, big_maxy)
+                    bbox = box(minx2, miny2, maxx2, maxy2)
                 else:
-                    df.to_file(tmp_streams)
-            except KeyError as e:
-                logging.error(f"{self.STREAM_ID} not found in the stream files here: {self.STREAM_NETWORK_FOLDER}")
-                return
-        else:
-            with fiona.open(strms[0], 'r') as src:
-                crs = src.crs
-            if ds_epsg != crs.to_epsg():
-                df = self.gpd_read(strms[0], columns=[self.STREAM_ID, 'geometry'], bbox=bbox)
-                projection = self.get_projection_from_gdf(df)
-                options = gdal.RasterizeOptions(attribute=self.STREAM_ID, outputType=gdal.GDT_UInt32,
-                                                # Assume no negative IDs. DO NOT SET TO UINT64 
-                                                format='GTiff', outputSRS=projection, 
-                                                creationOptions=["COMPRESS=DEFLATE", "PREDICTOR=2"], 
-                                                outputBounds=(minx, miny, maxx, maxy), noData=0, 
-                                                width=width, height=height,
-                )
+                    bbox = box(big_minx, big_miny, big_maxx, big_maxy)
+                try:
+                    df = self.gpd_read(f, columns=[self.STREAM_ID, 'geometry'], bbox=bbox)
+                except NotImplementedError:
+                    logging.warning(f"Skipping unsupported file: {f}")
+                    continue
+                except ValueError as e:
+                    logging.error(f"Cannot find {self.STREAM_ID} in {f}")
+                    raise e
+                
+                if not df.empty:
+                    dfs.append(df.to_crs(ds_epsg))
+            df = gpd.GeoDataFrame(pd.concat(dfs, ignore_index=True))
+            
+            if self.STREAM_ID is None or self.STREAM_ID == []:
+                logging.info(f"Setting stream id as {df.columns[0]}")
+                self.STREAM_ID = df.columns[0]
+            
+            if GEOMETRY_SAVE_EXTENSION == "parquet":
+                df.to_parquet(tmp_streams)
             else:
-                tmp_streams = strms[0]
+                df.to_file(tmp_streams)
+        except KeyError as e:
+            logging.error(f"{self.STREAM_ID} not found in the stream files here: {self.STREAM_NETWORK_FOLDER}")
+            return
+        # else:
+        #     with fiona.open(strms[0], 'r') as src:
+        #         crs = src.crs
+        #     if ds_epsg != crs.to_epsg():
+        #         df = self.gpd_read(strms[0], columns=[self.STREAM_ID, 'geometry'], bbox=bbox)
+        #         projection = self.get_projection_from_gdf(df)
+        #         options = gdal.RasterizeOptions(attribute=self.STREAM_ID, outputType=gdal.GDT_UInt32,
+        #                                         # Assume no negative IDs. DO NOT SET TO UINT64 
+        #                                         format='GTiff', outputSRS=projection, 
+        #                                         creationOptions=["COMPRESS=DEFLATE", "PREDICTOR=2"], 
+        #                                         outputBounds=(minx, miny, maxx, maxy), noData=0, 
+        #                                         width=width, height=height,
+        #         )
+        #     else:
+        #         tmp_streams = strms[0]
 
         for dem in dems:
             strm_raster = os.path.join(self.DATA_DIR, 'stream_files', f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__strm.tif")

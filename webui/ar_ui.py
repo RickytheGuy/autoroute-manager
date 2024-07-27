@@ -65,8 +65,8 @@ if __name__ == '__main__':
                                                 visible=False,
                                                 #info=manager.default('DEM_NAME'),
                                                 )
-                            flow_id = gr.Dropdown(value=manager.default("flow_id"),
-                                                label='Flow ID',
+                            streamlines_id_col = gr.Dropdown(value=manager.default("flow_id"),
+                                                label='Streamlines ID Column',
                                                 #info='Specifies the stream identifier that AutoRoute uses. Leave blank to use the first column.',
                                                 allow_custom_value=True,
                                                 multiselect=False,
@@ -83,67 +83,73 @@ if __name__ == '__main__':
                                                 placeholder='Copernicus',
                                                 label='Land Raster Name',
                                                 #info=manager.default('DEM_NAME'),
+                                                visible=False
                                                 )
                             LU_Manning_n = gr.Textbox(value=manager.default("LU_Manning_n"),
                                                     placeholder='/User/Desktop/mannings_n.txt',
                                                     label="Manning's n table",
                                                     #info=manager.default('LU_Manning_n')
                             )
-                    
-                        with gr.Column():
-                            base_max_file = gr.Textbox(value=manager.default("base_max_file"),
-                                                    placeholder='/User/Desktop/flow_file.txt',
-                                                    label="Base and Max Flow File",
-                                                    #info=manager.default('Flow_RAPIDFile'),
+                           
+                        id_flow_file = gr.Textbox(value=manager.default("Comid_Flow_File"),
+                                        placeholder='/User/Desktop/100_year_flow.txt',
+                                        label="ID Flow File",
+                                        #info=manager.default('Comid_Flow_File')
                             )
-                            id_flow_file = gr.Textbox(value=manager.default("Comid_Flow_File"),
-                                            placeholder='/User/Desktop/100_year_flow.txt',
-                                            label="ID Flow File",
-                                            #info=manager.default('Comid_Flow_File')
-                                )
-                            with gr.Row():
-                                flow_params_ar = gr.Dropdown(value=manager.default("flow_params_ar"),
-                                                        label='Flow Columns',
-                                                        #info='Specifies the flow rates that AutoRoute uses. Leave blank to use all columns besides the first one.',
-                                                        allow_custom_value=True,
-                                                        multiselect=False,
-                                                        interactive=True) # Careful
-                                flow_baseflow = gr.Dropdown(value=manager.default("flow_baseflow"),label='Base Flow Column',
-                                                        #info='Specifies the base flow rates that AutoRoute uses. Leave blank to not use.',
-                                                        allow_custom_value=True,
-                                                        multiselect=False,
-                                                        interactive=True)
-                                subtract_baseflow = gr.Checkbox(value=manager.default("subtract_baseflow"),
-                                                                label='Subtract Base Flow?',
-                                                                interactive=True
-                                )
 
-                            with gr.Row():
-                                crop = gr.Checkbox(value=manager.default("crop"),
-                                                label='Crop',
-                                                    info='Crop output to extent?',
+                        base_max_file = gr.Textbox(value=manager.default("base_max_file"),
+                                                placeholder='/User/Desktop/flow_file.txt',
+                                                label="Base and Max Flow File",
+                                                #info=manager.default('Flow_RAPIDFile'),
+                        )
+                        with gr.Row():
+                            
+                            flow_params_ar = gr.Dropdown(value=manager.default("flow_params_ar"),
+                                                    label='Max Flow Column',
+                                                    #info='Specifies the flow rates that AutoRoute uses. Leave blank to use all columns besides the first one.',
+                                                    allow_custom_value=True,
+                                                    multiselect=False,
+                                                    interactive=True) # Careful
+                            flow_baseflow = gr.Dropdown(value=manager.default("flow_baseflow"),label='Base Flow Column',
+                                                    #info='Specifies the base flow rates that AutoRoute uses. Leave blank to not use.',
+                                                    allow_custom_value=True,
+                                                    multiselect=False,
                                                     interactive=True)
-                                clean_outputs = gr.Checkbox(value=manager.default("clean_outputs"),
-                                                    label='Optimize Outputs',
-                                                    #info='Optimize outputs?',
-                                                    interactive=True)
-                                with gr.Column():
-                                    buffer = gr.Checkbox(value=manager.default("buffer"),
-                                                         visible=False,
-                                                        label='Buffer',
-                                                        info='Buffer the DEMs?',
-                                                        interactive=True)
-                                    buffer_distance = gr.Number(value=manager.default("buffer_distance"),
-                                                                label='Buffer Distance',
-                                                                visible=manager.default("buffer"),
-                                                                interactive=True)
-                                    buffer.change(lambda x: gr.Number(visible=x), inputs=buffer, outputs=buffer_distance)
-                                
-                            vdt_file = gr.Textbox(value=manager.default("vdt"),
-                                        placeholder='/User/Desktop/VDT/',
-                                        label="VDT Folder",
-                                        info=manager.doc('vdt')
+                            subtract_baseflow = gr.Checkbox(value=manager.default("subtract_baseflow"),
+                                                            label='Subtract Base Flow?',
+                                                            interactive=True
                             )
+                                
+                        vdt_file = gr.Textbox(value=manager.default("vdt"),
+                                    placeholder='/User/Desktop/VDT/',
+                                    label="VDT Folder (Optional)",
+                                    info=manager.doc('vdt')
+                        )
+
+                        with gr.Row():
+                            crop = gr.Checkbox(value=manager.default("crop"),
+                                            label='Crop',
+                                                info='Crop output to extent?',
+                                                interactive=True)
+                            clean_outputs = gr.Checkbox(value=manager.default("clean_outputs"),
+                                                label='Optimize Outputs',
+                                                info='Trim output raster file sizes, add compression',
+                                                interactive=True)
+                            overwrite = gr.Checkbox(False, visible=True,
+                                                    label='Overwrite',
+                                                interactive=True,
+                                                info="Force overwrite of existing files. Will take the longest time.")
+                            with gr.Column():
+                                buffer = gr.Checkbox(value=manager.default("buffer"),
+                                                        visible=False,
+                                                    label='Buffer',
+                                                    info='Buffer the DEMs?',
+                                                    interactive=True)
+                                buffer_distance = gr.Number(value=manager.default("buffer_distance"),
+                                                            label='Buffer Distance',
+                                                            visible=manager.default("buffer"),
+                                                            interactive=True)
+                                buffer.change(lambda x: gr.Number(visible=x), inputs=buffer, outputs=buffer_distance)
                         
                     with gr.Column(scale=2):
                         map_output = gr.Plot(label="Extent Preview")
@@ -189,7 +195,8 @@ if __name__ == '__main__':
                                 )
                                 ids_folder = gr.Textbox(value='',
                                                         placeholder='/User/Desktop/ids.txt',
-                                                        label='IDs Folder (optional)',)
+                                                        label='IDs Folder (optional)',
+                                                        info="Folder to save IDs found in the given extent. Leave blank to not save")
 
                             with gr.Column():
                                 depth_map = gr.Textbox(value=manager.default("out_depth"),
@@ -216,11 +223,29 @@ if __name__ == '__main__':
                                 run_button = gr.Button("Run Model", variant='primary')
                                 save_button = gr.Button("Save Parameters")
                                 get_ids_button = gr.Button("Get IDs from Inputs Given", variant='secondary')
+                                
+                            # with gr.Column():
+                            #     gr.Markdown('Below are the options to select a river and its downstream neighbors to use. '
+                            #                 '')
+                                
+                            #     ids_to_use = gr.Textbox(placeholder='/User/Desktop/ids.txt or 123456',
+                            #                             label='IDs to Use',
+                            #                             info=manager.doc('ids_to_use'))
+                            #     num_ids_to_use = gr.Number(value=-1, label='Number of IDs to Use', info=("This specifies how many downstream ids to include besides the ID specified"
+                            #                                                                              " Does nothing is a file is provided above. -1 means all downstream IDs are included"))
+                            #     num_upstream_branches = gr.Number(value=0, label='Number of Branches Upstream to Include', 
+                            #                                       info=("This specifies how many upstream branches to include"
+                            #                                     " for the downstream ids. 0 means only the downstream ids are included. Does nothing if a file is provided above"))
+                            #     save_ids_file = gr.Textbox(placeholder='/User/Desktop/ids.txt',
+                            #                             label='Save IDs to File',
+                            #                             info="Save the selected ids above to a file to use later. Leave blank to not save")
+                            #     get_selected_ids = gr.Button("Get Selected IDs")
+                            #     get_selected_ids.click(fn=manager.get_selected_ids, inputs=[ids_to_use, num_ids_to_use, num_upstream_branches, save_ids_file], outputs=[])
                       
                 gr.Markdown('## Inputs - Optional')  
                 with gr.Row():
                     with gr.Column():
-                        with gr.Accordion("AutoRoute parameters", open=False):
+                        with gr.Accordion("AutoRoute parameters"):
                             adjust_flow = gr.Number(value=manager.default("ADJUST_FLOW_BY_FRACTION"),
                                             label='Adjust Flow',
                                             info=manager.doc('ADJUST_FLOW_BY_FRACTION'),
@@ -240,7 +265,7 @@ if __name__ == '__main__':
 
                             with gr.Row():
                                 convert_cfs_to_cms = gr.Checkbox(value=manager.default("convert_cfs_to_cms"),
-                                                                label='CFS to CMS',
+                                                                label='CFS to CMS (THIS ONLY WORKS WITHOUT BASE MAX FILE)',
                                                                 info='Convert flow values from cubic feet per second to cubic meters per second'
                                 )
 
@@ -317,14 +342,17 @@ if __name__ == '__main__':
                                     UP_Str_Limit_Val = gr.Number(value=manager.default("UP_Str_Limit_Val"), label='Highest Perissible Value')
                             
                             with gr.Row():
+                                # DEPRECATED
                                 row_start=gr.Number(value=manager.default("Layer_Row_Start"),
                                                     precision=0,
                                                     label='Starting Row',
-                                                    info=manager.doc('Layer_Row_Start'))
+                                                    info=manager.doc('Layer_Row_Start'),
+                                                    visible=False)
                                 row_end=gr.Number(value=manager.default("Layer_Row_End"),
                                                 precision=0,
                                                     label='End Row',
-                                                    info=manager.doc('Layer_Row_End'))
+                                                    info=manager.doc('Layer_Row_End'),
+                                                    visible=False)
                                     
                             with gr.Row():     
                                 use_prev_d_4_xs = gr.Dropdown(
@@ -349,7 +377,7 @@ if __name__ == '__main__':
                                 
                             lu_name.change(manager.show_mans_n, [lu_name,LU_Manning_n], man_n)
 
-                            with gr.Accordion('Bathymetry', open=False):
+                            with gr.Accordion('Bathymetry'):
                                 run_ar_bathy = gr.Checkbox(value=manager.default("run_ar_bathy"),
                                                             interactive=True,
                                                             label='Run AutoRoute Bathymetry?',
@@ -396,10 +424,10 @@ if __name__ == '__main__':
                                         bathy_method.change(manager.bathy_changes, bathy_method, [bathy_x_max_depth, bathy_y_shallow])
                                 
                                 run_ar_bathy.change(lambda x: gr.Row(visible=x), inputs=run_ar_bathy, outputs=bathy_row)
-                                base_max_file.change(manager.update_flow_params, base_max_file, [flow_id,flow_params_ar, flow_baseflow, da_flow_param])
+                                base_max_file.change(manager.update_flow_params, base_max_file, [streamlines_id_col,flow_params_ar, flow_baseflow, da_flow_param])
 
                     with gr.Column():
-                        with gr.Accordion("FloodSpreader Parameters", open=False):
+                        with gr.Accordion("FloodSpreader Parameters"):
                             with gr.Column():
                                 omit_outliers = gr.Radio(['None','Flood Bad Cells', 'Use AutoRoute Depths', 'Smooth Water Surface Elevation','Use AutoRoute Depths (StDev)','Specify Depth'],
                                         value=manager.default("omit_outliers"),
@@ -451,7 +479,7 @@ if __name__ == '__main__':
                                                                 interactive=True)
                             
 
-                            with gr.Accordion('Bathymetry', open=False):
+                            with gr.Accordion('Bathymetry'):
                                 gr.Markdown('Note that the bathymetry file generated by AutoRoute must be specified in the AutoRoute Bathymetry section')
                                 with gr.Row():
                                     fs_bathy_file = gr.Textbox(value=manager.default("fs_bathy_file"),
@@ -471,8 +499,8 @@ if __name__ == '__main__':
                                                                     visible='Inverse-Distance Weighted' in manager.default("fs_bathy_smooth_method"))
                                         fs_bathy_smooth_method.change(lambda x: gr.Number(visible=True) if x[0] == 'I' else gr.Number(visible=False),
                                                                     fs_bathy_smooth_method, bathy_twd_factor)
-                overwrite = gr.Checkbox(False, visible=False)
-                inputs = [dem,dem_name, strm_lines, strm_name, lu_file, lu_name, base_max_file, subtract_baseflow, flow_id, flow_params_ar, flow_baseflow, num_iterations,
+                
+                inputs = [dem,dem_name, strm_lines, strm_name, lu_file, lu_name, base_max_file, subtract_baseflow, streamlines_id_col, flow_params_ar, flow_baseflow, num_iterations,
                                                         meta_file, convert_cfs_to_cms, x_distance, q_limit, LU_Manning_n, direction_distance, slope_distance, low_spot_distance, low_spot_is_meters,
                                                         low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, degree_manip, degree_interval, Str_Limit_Val, UP_Str_Limit_Val, row_start, row_end, use_prev_d_4_xs,
                                                         weight_angles, man_n, adjust_flow, bathy_alpha, ar_bathy_out_file, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
@@ -487,7 +515,7 @@ if __name__ == '__main__':
                     logging.error(e)
                                                 
                 save_button.click(fn=manager.save, inputs=inputs, outputs=[])
-                get_ids_button.click(fn=manager.get_ids, inputs=[dem, strm_lines, minx, miny, maxx, maxy, ids_folder, flow_id], outputs=[])
+                get_ids_button.click(fn=manager.get_ids, inputs=[dem, strm_lines, minx, miny, maxx, maxy, ids_folder, streamlines_id_col], outputs=[])
 
             with gr.TabItem('File Preprocessing'):
                 with gr.Tabs():
