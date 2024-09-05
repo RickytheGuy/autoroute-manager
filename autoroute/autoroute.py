@@ -29,12 +29,8 @@ os.environ["GDAL_NUM_THREADS"] = 'ALL_CPUS'
 gdal.UseExceptions()
 
 
-if (spec := importlib.util.find_spec('pyogrio')) is not None:
-    GPD_ENGINE = "pyogrio"
-    if int(gdal.VersionInfo()) >= 3060000 and importlib.util.find_spec('pyogrio') is not None:
-        os.environ["PYOGRIO_USE_ARROW"] = "1"
-else:
-    GPD_ENGINE = "fiona"
+if int(gdal.VersionInfo()) >= 3060000 and importlib.util.find_spec('pyogrio') is not None:
+    os.environ["PYOGRIO_USE_ARROW"] = "1"
 
 if gdal.GetDriverByName("Parquet") is not None:
     # If gdal parquet library is installed, use it because its faster/better compression
@@ -420,8 +416,6 @@ class AutoRouteHandler:
         """
         Reads .parquet, .shp, .gpkg, and potentially others and returns in a way we expect.
         """
-        global GPD_ENGINE
-
         # Handle case where columns contain None or are empty
         if columns and (None in columns or not columns):
             columns = None
@@ -435,7 +429,7 @@ class AutoRouteHandler:
             if bbox:
                 df = df[df.geometry.intersects(bbox)]
         elif path.endswith((".shp", ".gpkg")):
-            df = gpd.read_file(path, bbox=bbox, engine=GPD_ENGINE)
+            df = gpd.read_file(path, bbox=bbox)
             if columns:
                 df = df[columns]
         else:
@@ -510,8 +504,9 @@ class AutoRouteHandler:
                     logging.warning(f"Skipping unsupported file: {f}")
                     continue
                 except ValueError as e:
-                    logging.error(f"Cannot find {self.STREAM_ID} in {f}")
-                    raise e
+                    msg = f"Cannot find the field for stream ID '{self.STREAM_ID}' in {f}"
+                    logging.error(msg)
+                    raise IndexError(msg)
                 
                 if not df.empty:
                     dfs.append(df.to_crs(ds_epsg))
