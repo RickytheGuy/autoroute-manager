@@ -344,20 +344,23 @@ class AutoRouteHandler:
         projection = ds.GetProjection()
         no_data_value = ds.GetRasterBand(1).GetNoDataValue()
 
-        # try:
-        #     srs = osr.SpatialReference(wkt=ds.GetProjection())
-        #     if srs.IsProjected():
-        #         units = srs.GetLinearUnitsName()
-        #     else:
-        #         units = srs.GetAngularUnitsName()
-        #     if 'degree' in units:
-        #         buffer_distance = 0.1 # Buffer by 0.1 degrees
-        #     elif 'meter' in units and not 'k' in units:
-        #         buffer_distance = 10_000 # Buffer by 10 km
-        #     else:
-        #         raise NotImplementedError(f'Unsupported units: {units}')
-        # except Exception as e:
-        #     logging.error(f'Error buffering dem: \n{e}')
+        srs = osr.SpatialReference(wkt=projection)
+        if srs.IsProjected():
+            units = srs.GetLinearUnitsName().lower()
+        else:
+            units = srs.GetAngularUnitsName().lower()
+
+        buffer_distance = 0.1 # Buffer by 0.1 degrees
+        if 'degree' in units:
+            pass
+        elif ('meter' in units or 'metre' in units):
+            if 'k' in units:
+                buffer_distance = 10
+            else:   
+                buffer_distance = 10_000 # Buffer by 10 km
+        else:
+            logging.warning(f"Unknown units: {units}. Assuming degrees")
+        
         buffer_distance = self.BUFFER_DISTANCE
         minx, miny, maxx,maxy = self.get_ds_extent(ds)
         ds = None
