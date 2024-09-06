@@ -1,30 +1,29 @@
-import gradio as gr
+
 import os
-import logging
+import json
+import platform
+import re
 from typing import Tuple, Dict, List
+
+import multiprocessing
+import pyogrio
+import contextily as ctx
+import xarray as xr
+import gradio as gr
+import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import pandas as pd
 import geopandas as gpd
-import json
-import platform
-import re
-import sys
-import multiprocessing
-import xarray as xr
-import numpy as np
-import fiona
+
 from osgeo import gdal
 from shapely.geometry import box
-from git import Repo
 from shapely.geometry import LineString
 from pyproj import Transformer
-try:
-    from autoroute.autoroute import AutoRouteHandler
-except ImportError:
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    sys.path.append(project_root)
-    from autoroute.autoroute import AutoRouteHandler
+
+from autoroute_manager.autoroute import AutoRoute
+from autoroute_manager import LOG
+
 
 gdal.UseExceptions()
 
@@ -32,7 +31,7 @@ SYSTEM = platform.system()
 
 class ManagerFacade():
     def init(self) -> None:
-        self.manager = AutoRouteHandler(None)
+        self.manager = AutoRoute(None)
         self.docs_file = 'defaults_and_docs.json'
         docs = None
         data = None
@@ -49,9 +48,10 @@ class ManagerFacade():
         self.data = data
         
         extensions = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'extensions')
-        self.pull_autoroute_py(extensions)
-        from extensions.autoroutepy import Automated_Rating_Curve_Generator
-        self.autoroutepy = Automated_Rating_Curve_Generator.main
+        # self.pull_autoroute_py(extensions)
+        # from extensions.autoroutepy import Automated_Rating_Curve_Generator
+        # self.autoroutepy = Automated_Rating_Curve_Generator.main
+        self.autoroutepy = None
 
         
     async def run(self, **kwargs):
@@ -64,7 +64,7 @@ class ManagerFacade():
         return self.data.get(key, None)
     
     def get_ids(self, *args) -> None:
-        logging.info("Getting IDs...")
+        LOG.info("Getting IDs...")
         dem = args[0]
         strm_lines = self._format_files(args[1])
         minx = args[2]
@@ -80,7 +80,7 @@ class ManagerFacade():
             stream_files = [strm_lines]
         else:
             msg = f"{strm_lines} is not a valid file or folder"
-            logging.error(msg)
+            LOG.error(msg)
             gr.Error(msg)
             return
         
@@ -94,12 +94,12 @@ class ManagerFacade():
                 results = pool.starmap(self._get_ids, [(f, [minx, miny, maxx, maxy], flow_id) for f in stream_files])
             except KeyError:
                 msg = f"{flow_id !r} is not a valid field in the stream files provided"
-                logging.error(msg)
+                LOG.error(msg)
                 gr.Error(msg)
                 return
         if len(results) == 0:
             msg = "No IDs found in the stream files provided"
-            logging.error(msg)
+            LOG.error(msg)
             gr.Error(msg)
             return
         if len(results) == 1:
@@ -108,16 +108,19 @@ class ManagerFacade():
             results = np.unique(np.concatenate(results, axis=None))
         pd.DataFrame({flow_id: results}).to_csv(output_file, index=False)
         msg = f"IDs saved to {output_file}"
-        logging.info(msg)
+        LOG.info(msg)
         gr.Info(msg)
         
         
     def _get_ids(self, strm_file: str, extent: List[float], id_field: str) -> np.ndarray:
-        with fiona.open(strm_file, 'r') as src:
-                crs = src.crs
-                f_extent = box(*src.bounds)
-        if crs.to_epsg() != 4326:
-            transformer = Transformer.from_crs("EPSG:4326",crs.to_string(), always_xy=True) 
+        # with fiona.open(strm_file, 'r') as src:
+        #         crs = src.crs
+        #         f_extent = box(*src.bounds)
+        data = pyogrio.read_info(strm_file)
+        crs_epsg = int(data['crs'].split(':')[1])
+        f_extent = box(*data['total_bounds'])
+        if crs_epsg != 4326:
+            transformer = Transformer.from_crs("EPSG:4326",f"EPSG:{crs_epsg}", always_xy=True) 
             minx2, miny2 = transformer.transform(extent[0], extent[1])
             maxx2, maxy2 =  transformer.transform(extent[2], extent[3])
             bbox = box(minx2, miny2, maxx2, maxy2)
@@ -235,7 +238,7 @@ class ManagerFacade():
         with open(self.docs_file, 'w', encoding='utf-8') as f:
             f.write(json.dumps(to_write, indent=4))
             
-        logging.info("Parameters saved!")
+        LOG.info("Parameters saved!")
 
     #@staticmethod
     def _format_files(self,file_path: str) -> str:
@@ -486,69 +489,45 @@ class ManagerFacade():
         ax.tick_params(left = False, bottom = False)
         ax.xaxis.set_major_locator(ticker.MaxNLocator(nbins=2))
         ax.yaxis.set_major_locator(ticker.MaxNLocator(nbins=2))
-        try:
-            import contextily as ctx
-            ctx.add_basemap(ax, 
-                        crs=3857, 
-                        attribution=False, 
-                        source=ctx.providers.Esri.WorldImagery
-                        )
-        except ImportError:
-            pass
+
+        ctx.add_basemap(ax, 
+                    crs=3857, 
+                    attribution=False, 
+                    source=ctx.providers.Esri.WorldImagery
+                    )
         
         return fig
         
-    def pull_autoroute_py(self,extensions: str) -> None:
-        """
-        Pull the autoroute.py file from the extensions folder
-        """
-        if not os.path.exists(extensions):
-            os.makedirs(extensions)
-            
-        import_folder = os.path.join(extensions, 'autoroutepy')
-        if not os.path.exists(import_folder):
-            try:
-                Repo.clone_from('https://github.com/RickytheGuy/automated-rating-curve-byu.git', import_folder)
-            except Exception as e:
-                gr.Warning(f"Could not clone the automated rating curve repository: {e}")
-            return
-                
-        repo = Repo(import_folder)
-        try:
-            repo.remotes.origin.pull()
-        except Exception as e:
-            gr.Warning(f"Could not pull the automated rating curve repository: {e}")
-               
     def get_forecast(self, input_path: str, output_path: str, date: str, ensemble: str) -> None:
         try:
             import geoglows
         except ImportError:
             msg = "Please install the geoglows package to use this function. Run 'conda install geoglows' in your terminal."
-            logging.error(msg)
+            LOG.error(msg)
             gr.Error(msg)
             return
         
         if not os.path.exists(input_path):
             msg = f"{input_path} does not exist"
-            logging.error(msg)
+            LOG.error(msg)
             gr.Error(msg)
             return
         
         if not output_path:
             msg = "No output path specified"
-            logging.error(msg)
+            LOG.error(msg)
             gr.Error(msg)
             return
         
         if not ensemble:
             msg = "No ensemble specified"
-            logging.error(msg)
+            LOG.error(msg)
             gr.Error(msg)
             return
         
         if not date or not re.match(r'\d{4}\d{2}\d{2}', date):
             msg = "Invalid date format. Please use the format 'YYYYMMDD'"
-            logging.error(msg)
+            LOG.error(msg)
             gr.Error(msg)
             return
         
@@ -589,25 +568,25 @@ class ManagerFacade():
             import geoglows
         except ImportError:
             msg = "Please install the geoglows package to use this function. Run 'conda install geoglows' in your terminal."
-            logging.error(msg)
+            LOG.error(msg)
             gr.Error(msg)
             return
         
         if not os.path.exists(input_path):
             msg = f"{input_path} does not exist"
-            logging.error(msg)
+            LOG.error(msg)
             gr.Error(msg)
             return
         
         if not output_path:
             msg = "No output path specified"
-            logging.error(msg)
+            LOG.error(msg)
             gr.Error(msg)
             return
         
         if not date or not re.match(r'\d{4}\d{2}\d{2}', date):
             msg = "Invalid date format. Please use the format 'YYYYMMDD'"
-            logging.error(msg)
+            LOG.error(msg)
             gr.Error(msg)
             return
         
@@ -617,7 +596,7 @@ class ManagerFacade():
         # Save the first column as a list of IDs and remove duplicates
         ids = np.unique(df.iloc[:,0].values)
         
-        logging.info(f"Getting forecast data for {len(ids)} rivers")
+        LOG.info(f"Getting forecast data for {len(ids)} rivers")
         gr.Info(f"Getting forecast data for {len(ids)} rivers")
         
         num_to_run = min(os.cpu_count(), len(ids))
@@ -631,7 +610,7 @@ class ManagerFacade():
         pd.DataFrame({'LINKNO': ids, 'max_median_flow': max_median_flows}).to_csv(output_path, index=False)
         msg = "Finished getting forecast median flow data"
         gr.Info(msg)
-        logging.info(msg)
+        LOG.info(msg)
             
     def list_to_sublists(self, alist: List, n: int, add_tuple=None) -> List:
         if add_tuple:
@@ -647,7 +626,7 @@ def help_get_forecast_median(ids: list, date: str) -> list:
             data: pd.DataFrame = geoglows.data.forecast_stats(id, date)
         except KeyError:
             msg = f"Could not get forecast for {id}; not in the geoglows dataset"
-            logging.warning(msg)
+            LOG.warning(msg)
             gr.Warning(msg)
             continue
         
@@ -673,20 +652,20 @@ def get_selected_ids(ids_to_use: str, num_ids_to_use: int, num_upstream_branches
         import networkx
     except ImportError:
         msg = "Please install the networkx package to use this function. Run 'conda install networkx' in your terminal."
-        logging.error(msg)
+        LOG.error(msg)
         gr.Error(msg)
         return
     
     if not ids_to_use:
         msg = "No IDs to use specified"
-        logging.error(msg)
+        LOG.error(msg)
         gr.Error(msg)
         return
     
     if os.path.isfile(ids_to_use):
         if not os.path.exists(ids_to_use):
             msg = f"{ids_to_use} does not exist"
-            logging.error(msg)
+            LOG.error(msg)
             gr.Error(msg)
             return
         ids = open_csv_regardless_of_header(ids_to_use).iloc[:,0].values
@@ -695,7 +674,7 @@ def get_selected_ids(ids_to_use: str, num_ids_to_use: int, num_upstream_branches
             ids = [int(i) for i in ids_to_use.split(',')]
         except ValueError:
             msg = "You've entered invalid IDs"
-            logging.error(msg)
+            LOG.error(msg)
             gr.Error(msg)
             return
 

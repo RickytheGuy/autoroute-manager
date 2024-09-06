@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autoroute-manager"
+dynamic = ["version"]
+dependencies = [
+  "gradio",
+  "xarray",
+  "matplotlib",
+  "geopandas",
+  "gdal>=3.8",
+  "pyyaml",
+  "tqdm"
+]
+requires-python = ">= 3.10"
+authors = [
+    {name = "Louis 'Ricky' Rosas", email = "lrr43@byu.edu"},
+    {name = "Taylor Miskin"},
+]
+maintainers = [
+    {name = "Louis 'Ricky' Rosas", email = "lrr43@byu.edu"},
+]
+license = { text = "BSD-3-Clause" }
+description = "A package with a web interface for running AutoRoute at scale."
+readme = "README.md"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+[project.optional-dependencies]
+geo = ["geoglows"]
+test = ["pytest"]
+fast = ["libgdal-arrow-parquet"]
+
+[tool.setuptools]
+py-modules = []
+
+[project.scripts]
+autoroute-webui = "autoroute_manager.webui:ui"

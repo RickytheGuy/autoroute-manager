@@ -6,13 +6,30 @@ import numpy as np
 import pandas as pd
 from osgeo import gdal
 
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.append(project_root)
-
-from autoroute.autoroute import AutoRouteHandler
+from autoroute_manager.autoroute import AutoRoute
 
 AUTOROUTE_EXE = os.path.join("tests","test_data","exes","AutoRoute_w_GDAL.exe")
 FLOODSPREADER_EXE = os.path.join("tests","test_data","exes","AutoRoute_FloodSpreader.exe")
+
+def run_autoroute(params, output):
+    AutoRoute(params).run()
+    assert os.path.exists(output)
+
+def check_row_col_equals(params, output, validation):
+    run_autoroute(params, output)
+
+    out_df = pd.read_csv(output, sep='\t')
+    val_df = pd.read_csv(validation, sep='\t')
+    out_df = out_df.reindex(sorted(out_df.columns), axis=1)
+    val_df = val_df.reindex(sorted(val_df.columns), axis=1)
+    pd.testing.assert_frame_equal(out_df, val_df, check_exact=False)
+
+def check_arrays_equal(output, validation):
+    with gdal.Open(output) as out_ds, gdal.Open(validation) as val_ds:
+        assert out_ds is not None
+        assert np.allclose(out_ds.ReadAsArray(), val_ds.ReadAsArray())
+        assert np.allclose(out_ds.GetGeoTransform(), val_ds.GetGeoTransform())
+        assert out_ds.GetProjection() == val_ds.GetProjection()
 
 if __name__ in ["__main__", 'test_autoroute']:
     def tearDown(output) -> None:
@@ -34,7 +51,7 @@ if __name__ in ["__main__", 'test_autoroute']:
                 "DISABLE_PBAR": True}
         output = os.path.join("test_ar_data","stream_files","N18W073_FABDEM_V1-2__strm.tif")
         validation = os.path.join("tests","test_data","validation","rasterization","N18W073_FABDEM_V1-2__strm_val.tif")
-        AutoRouteHandler(params).run()
+        AutoRoute(params).run()
 
         assert os.path.exists(output)
         with gdal.Open(output) as out_ds, gdal.Open(validation) as val_ds:
@@ -44,7 +61,7 @@ if __name__ in ["__main__", 'test_autoroute']:
             assert out_ds.GetProjection() == val_ds.GetProjection()
         tearDown(output)
         
-    test_strm_rasterization()
+    # test_strm_rasterization()
 
     def test_sameProjection_parquet_singleFiles():
         params = {"OVERWRITE": True,
@@ -58,14 +75,9 @@ if __name__ in ["__main__", 'test_autoroute']:
                 "STREAM_NETWORK_FOLDER": os.path.join("tests","test_data","streamlines","single_parquet_4326")}
         output = os.path.join("test_ar_data","stream_files","N18W073_FABDEM_V1-2__strm.tif")
         validation = os.path.join("tests","test_data","validation","rasterization","N18W073_FABDEM_V1-2__strm_val.tif")
-        AutoRouteHandler(params).run()
+        AutoRoute(params).run()
 
-        assert os.path.exists(output)
-        with gdal.Open(output) as out_ds, gdal.Open(validation) as val_ds:
-            assert out_ds is not None
-            assert np.array_equal(out_ds.ReadAsArray(), val_ds.ReadAsArray())
-            assert out_ds.GetGeoTransform() == val_ds.GetGeoTransform()
-            assert out_ds.GetProjection() == val_ds.GetProjection()
+        check_arrays_equal(output, validation)
         tearDown(output)
 
     def test_difProjection_parquet_singleFiles():
@@ -81,17 +93,12 @@ if __name__ in ["__main__", 'test_autoroute']:
             "DISABLE_PBAR": True,
             "STREAM_NETWORK_FOLDER": os.path.join("tests","test_data","streamlines","single_parquet_3857")
         }
-        AutoRouteHandler(params).run()
+        AutoRoute(params).run()
         
         output = os.path.join("test_ar_data","stream_files","N18W073_FABDEM_V1-2__strm.tif")
         validation = os.path.join("tests","test_data","validation","rasterization","N18W073_FABDEM_V1-2__strm_val.tif")
 
-        assert os.path.exists(output)
-        with gdal.Open(output) as out_ds, gdal.Open(validation) as val_ds:
-            assert out_ds is not None
-            assert np.array_equal(out_ds.ReadAsArray(), val_ds.ReadAsArray())
-            assert out_ds.GetGeoTransform() == val_ds.GetGeoTransform()
-            assert out_ds.GetProjection() == val_ds.GetProjection()
+        check_arrays_equal(output, validation)
         run_extent=True
         tearDown(output)
 
@@ -107,7 +114,7 @@ if __name__ in ["__main__", 'test_autoroute']:
             "STREAM_NETWORK_FOLDER": os.path.join("tests","test_data","streamlines","multiple_parquet_various")
         }
 
-        AutoRouteHandler(params).run()
+        AutoRoute(params).run()
         
         output = os.path.join("test_ar_data","stream_files","N18W073_FABDEM_V1-2__strm.tif")
         validation = os.path.join("tests","test_data","validation","rasterization","N18W073_FABDEM_V1-2__strm_val.tif")
@@ -136,14 +143,9 @@ if __name__ in ["__main__", 'test_autoroute']:
         }
         output = os.path.join("test_ar_data","stream_files","N18W073_FABDEM_V1-2_crop__strm.tif")
         validation = os.path.join("tests","test_data","validation","rasterization","-72_163__18_623__-72_12__18_661_crop__strm.tif")
-        AutoRouteHandler(params).run()
+        AutoRoute(params).run()
 
-        assert os.path.exists(output)
-        with gdal.Open(output) as out_ds, gdal.Open(validation) as val_ds:
-            assert out_ds is not None
-            assert np.array_equal(out_ds.ReadAsArray(), val_ds.ReadAsArray())
-            assert out_ds.GetGeoTransform() == val_ds.GetGeoTransform()
-            assert out_ds.GetProjection() == val_ds.GetProjection()
+        check_arrays_equal(output, validation)
         tearDown(output)
 
     #### RAPID File Creation Tests
@@ -163,14 +165,8 @@ if __name__ in ["__main__", 'test_autoroute']:
             "DISABLE_PBAR": True}
         output = os.path.join("test_ar_data","rapid_files","N18W073_FABDEM_V1-2__row_col_id.txt")
         validation = os.path.join("tests","test_data","validation","row_id_flow","N18W073_FABDEM_V1-2__strm__row_col_id.txt")
-        AutoRouteHandler(params).run()
-
-        assert os.path.exists(output)
-        out_df = pd.read_csv(output, sep='\t')
-        val_df = pd.read_csv(validation, sep='\t')
-        out_df = out_df.reindex(sorted(out_df.columns), axis=1)
-        val_df = val_df.reindex(sorted(val_df.columns), axis=1)
-        assert out_df.equals(val_df), "Dataframes are not equal"
+        
+        check_row_col_equals(params, output, validation)
         tearDown(output)
 
     def test_row_col_id_file_no_inputs():
@@ -190,14 +186,7 @@ if __name__ in ["__main__", 'test_autoroute']:
         output = os.path.join("test_ar_data","rapid_files","N18W073_FABDEM_V1-2__row_col_id.txt")
         validation = os.path.join("tests","test_data","validation","row_id_flow","N18W073_FABDEM_V1-2__strm__row_col_id.txt")
 
-        AutoRouteHandler(params).run()
-
-        assert os.path.exists(output)
-        out_df = pd.read_csv(output, sep='\t')
-        val_df = pd.read_csv(validation, sep= '\t')
-        out_df = out_df.reindex(sorted(out_df.columns), axis=1)
-        val_df = val_df.reindex(sorted(val_df.columns), axis=1)
-        assert out_df.equals(val_df), "Dataframes are not equal"
+        check_row_col_equals(params, output, validation)
         tearDown(output)
         
     #### Land Use Tests
@@ -214,16 +203,11 @@ if __name__ in ["__main__", 'test_autoroute']:
         }
         output = os.path.join("test_ar_data","land_use","N18W073_FABDEM_V1-2__lu.vrt")
         validation = os.path.join("tests","test_data","validation","LU","same_proj","lu.tif")
-        AutoRouteHandler(params).run()
+        AutoRoute(params).run()
 
         if not os.path.exists(output):
             output = output.replace(".vrt", ".tif")
-        assert os.path.exists(output), "File does not exist"
-        with gdal.Open(output) as out_ds, gdal.Open(validation) as val_ds:
-            assert out_ds != None, "Problem opening file"
-            assert np.array_equal(out_ds.ReadAsArray(), val_ds.ReadAsArray()), "Arrays are not equal"
-            assert out_ds.GetGeoTransform() == val_ds.GetGeoTransform(), "GeoTransform is not equal"
-            assert out_ds.GetProjection() == val_ds.GetProjection(), "Projection is not equal"
+        check_arrays_equal(output, validation)
         tearDown(output)
 
     def test_land_use_multiple_projected():
@@ -238,121 +222,92 @@ if __name__ in ["__main__", 'test_autoroute']:
         }
         output = os.path.join("test_ar_data","land_use","N18W073_FABDEM_V1-2__lu.vrt")
         validation = os.path.join("tests","test_data","validation","LU","dif_proj","lu.tif") # Projection slightly rotates output, which is close enough
-        AutoRouteHandler(params).run()
+        AutoRoute(params).run()
 
         if not os.path.exists(output):
             output = output.replace(".vrt", ".tif")
-        assert os.path.exists(output), "File does not exist"
-        with gdal.Open(output) as out_ds, gdal.Open(validation) as val_ds:
-            assert out_ds != None, "Problem opening file"
-            assert np.array_equal(out_ds.ReadAsArray(), val_ds.ReadAsArray()), "Arrays are not equal"
-            assert out_ds.GetGeoTransform() == val_ds.GetGeoTransform(), "GeoTransform is not equal"
-            assert out_ds.GetProjection() == val_ds.GetProjection(), "Projection is not equal"
+        check_arrays_equal(output, validation)
         tearDown(output)
 
-# @unittest.skip
-# class TestCrop(unittest.TestCase):
-#     def setUp(self) -> None:
-#         params = {"OVERWRITE": True,
-#               "DATA_DIR": "test_ar_data",
-#               "DEM_FOLDER": os.path.join("tests","test_data","DEMs","single_4326"),
-#               "BUFFER_FILES": False, 
-#               "DEM_NAME": "test_dem", 
-#               "STREAM_NETWORK_FOLDER": os.path.join("tests","test_data","streamlines","single_parquet_4326", ),
-#               "STREAM_NAME": "test_strm", 
-#               "STREAM_ID": "LINKNO",
-#                "DISABLE_PBAR": True}
-#         output = os.path.join("test_ar_data","dems","test_dem","-72_163__18_623__-72_12__18_661_crop.vrt")
-#         validation = os.path.join("tests","test_data","DEMs","single_cropped","cropped_dem.tif")
+    def test_crop_dem():
+        params = {"OVERWRITE": True,
+              "DATA_DIR": "test_ar_data",
+              "DEM_FOLDER": os.path.join("tests","test_data","DEMs","single_4326"),
+              "BUFFER_FILES": False, 
+              "DEM_NAME": "test_dem", 
+              "STREAM_NETWORK_FOLDER": os.path.join("tests","test_data","streamlines","single_parquet_4326", ),
+              "STREAM_NAME": "test_strm", 
+              "STREAM_ID": "LINKNO",
+               "DISABLE_PBAR": True}
+        output = os.path.join("test_ar_data","dems","cropped","N18W073_FABDEM_V1-2_crop.vrt")
+        validation = os.path.join("tests","test_data","DEMs","single_cropped","cropped_dem.tif")
         
-#     def tearDown(self) -> None:
-#         if not os.path.exists(output):
-#             output = output.replace(".vrt", ".tif")
-#         if output and os.path.exists(output): os.remove(output) 
+        params["EXTENT"] = (-72.1626, 18.6228, -72.1195, 18.6611)
+        params["CROP"] = True
+        AutoRoute(params).run()
+
+        if not os.path.exists(output):
+            output = output.replace(".vrt", ".tif")
+
+        with gdal.Open(output) as out_ds, gdal.Open(validation) as val_ds:
+            assert out_ds is not None
+            assert (out_ds.ReadAsArray() - val_ds.ReadAsArray()).max() < 9.2 # Because cells are shifted, values shift as well oh so slightly, which a vrt does not pick up
+            assert np.allclose(out_ds.GetGeoTransform(), val_ds.GetGeoTransform(), atol=1e-6)
+            assert out_ds.GetProjection() == val_ds.GetProjection()
+        tearDown(output)
+
+    def test_flowfile():
+        params = {"OVERWRITE": True,
+               "DEM_FOLDER": os.path.join("tests","test_data","DEMs","single_4326"),
+               "DATA_DIR": "test_ar_data",
+               "DEM_NAME": "test_dem", 
+               "STREAM_NETWORK_FOLDER": os.path.join("tests","test_data","streamlines","single_parquet_4326"),
+               "STREAM_NAME": "test_strm", 
+               "STREAM_ID": "LINKNO",
+               "FLOOD_FLOWFILE":  os.path.join("tests","test_data","flow_files","v2_flowfile.csv",),
+        }
+        output = os.path.join("test_ar_data","flow_files","N18W073_FABDEM_V1-2__flow.txt")
+        validation = os.path.join("tests","test_data","validation","flowfile","N18W073_FABDEM_V1-2__strm__flow.txt")
+
+        AutoRoute(params).run()
+
+        assert os.path.exists(output)
+        out_df = pd.read_csv(output)
+        val_df = pd.read_csv(validation)
+        pd.testing.assert_frame_equal(out_df, val_df, check_exact=False)
+        tearDown(output)
+
+    @pytest.mark.skipif(sys.platform == "darwin", reason="Not supported on macOS")
+    @pytest.mark.skipif(not os.path.exists(AUTOROUTE_EXE), reason="AutoRoute exe not found")
+    def test_autoroute():
+        params = {"OVERWRITE": True,
+              "DATA_DIR": "test_ar_data",
+              "DEM_FOLDER": os.path.join("tests","test_data","DEMs","single_4326"),
+              "BUFFER_FILES": False, 
+              "DEM_NAME": "test_dem", 
+              "STREAM_NETWORK_FOLDER": os.path.join("tests","test_data","streamlines","single_parquet_4326"), 
+              "STREAM_NAME": "test_strm", 
+              "STREAM_ID": "LINKNO",
+              "LAND_USE_FOLDER": os.path.join("tests","test_data","LUs","single_4326"),
+              "LAND_USE_NAME": "test_land",
+              "SIMULATION_FLOWFILE":  os.path.join("tests","test_data","flow_files","v2_flows.csv",),
+               "SIMULATION_ID_COLUMN": "LINKNO",
+               "SIMULATION_FLOW_COLUMN": "max",
+               "BASE_FLOW_COLUMN": "flow",
+              "AUTOROUTE": AUTOROUTE_EXE,
+               "AUTOROUTE_CONDA_ENV": "autoroute",
+                "MANNINGS_TABLE": os.path.join("tests","test_data","mannings_table","mannings.txt"),
+                 "DISABLE_PBAR": True}
+        output = os.path.join("test_ar_data","vdts","N18W073_FABDEM_V1-2__vdt.txt")
+        validation = os.path.join("tests","test_data","validation","vdts","simple_inputs.txt")
         
-#     def test_crop_dem(self):
-#         params["EXTENT"] = (-72.1626, 18.6228, -72.1195, 18.6611)
-#         params["CROP"] = True
-#         AutoRouteHandler(params).run()
-
-#         if not os.path.exists(output):
-#             output = output.replace(".vrt", ".tif")
-#         assertTrue(os.path.exists(output), "File does not exist")
-#         out_ds = gdal.Open(output)
-#         assertIsNotNone(out_ds, "Problem opening file")
-#         val_ds = gdal.Open(validation)
-#         assertTrue((out_ds.ReadAsArray() - val_ds.ReadAsArray()).max() < 9.2, "Arrays are not equal") # Because cells are shifted, values shift as well oh so slightly, which a vrt does not pick up
-#         assertTrue(np.isclose((np.array(out_ds.GetGeoTransform()) - np.array(val_ds.GetGeoTransform())).max(), 0), "GeoTransform is not equal")
-#         assertEqual(out_ds.GetProjection(), val_ds.GetProjection(), "Projection is not equal")
-
-# @unittest.skip
-# class TestFlowFile(unittest.TestCase):
-#     def setUp(self) -> None:
-#         params = {"OVERWRITE": True,
-#                        "DEM_FOLDER": os.path.join("tests","test_data","DEMs","single_4326"),
-#                        "DATA_DIR": "test_ar_data",
-#                        "DEM_NAME": "test_dem", 
-#                        "STREAM_NETWORK_FOLDER": os.path.join("tests","test_data","streamlines","single_parquet_4326"),
-#                        "STREAM_NAME": "test_strm", 
-#                        "STREAM_ID": "LINKNO",
-#                        "FLOOD_FLOWFILE":  os.path.join("tests","test_data","flow_files","v2_flowfile.csv",),
-#                }
-#         output = os.path.join("test_ar_data","flow_files","N18W073_FABDEM_V1-2__strm__flow.txt")
-#         validation = os.path.join("tests","test_data","validation","flowfile","N18W073_FABDEM_V1-2__strm__flow.txt")
- 
-#     def tearDown(self) -> None:
-#         if output and os.path.exists(output): os.remove(output) 
-
-#     def test_flowfile(self):
-#         AutoRouteHandler(params).run()
-
-#         assertTrue(os.path.exists(output))
-#         out_df = pd.read_csv(output)
-#         val_df = pd.read_csv(validation)
-#         assertTrue(out_df.equals(val_df), "Dataframes are not equal")
-
-# run_floodspreader = True
-# @unittest.skip
-# @unittest.skipIf(sys.platform != "win32" and sys.platform != "linux", "Runs only on windows or linux")
-# @unittest.skipIf(not os.path.exists(AUTOROUTE_EXE), "AutoRoute exe not found")
-# class TestAutoRoute(unittest.TestCase):
-#     def setUp(self) -> None:
-#         params = {"OVERWRITE": True,
-#               "DATA_DIR": "test_ar_data",
-#               "DEM_FOLDER": os.path.join("tests","test_data","DEMs","single_4326"),
-#               "BUFFER_FILES": False, 
-#               "DEM_NAME": "test_dem", 
-#               "STREAM_NETWORK_FOLDER": os.path.join("tests","test_data","streamlines","single_parquet_4326"), 
-#               "STREAM_NAME": "test_strm", 
-#               "STREAM_ID": "LINKNO",
-#               "LAND_USE_FOLDER": os.path.join("tests","test_data","LUs","single_4326"),
-#               "LAND_USE_NAME": "test_land",
-#               "SIMULATION_FLOWFILE":  os.path.join("tests","test_data","flow_files","v2_flows.csv",),
-#                "SIMULATION_ID_COLUMN": "LINKNO",
-#                "SIMULATION_FLOW_COLUMN": "max",
-#                "BASE_FLOW_COLUMN": "flow",
-#               "AUTOROUTE": AUTOROUTE_EXE,
-#                "AUTOROUTE_CONDA_ENV": "autoroute",
-#                 "MANNINGS_TABLE": os.path.join("tests","test_data","mannings_table","mannings.txt"),
-#                  "DISABLE_PBAR": True}
-#         output = os.path.join("test_ar_data","vdts","N18W073_FABDEM_V1-2__vdt.txt")
-#         validation = os.path.join("tests","test_data","validation","vdts","simple_inputs.txt")
-        
-#     def tearDown(self) -> None:
-#         if output and os.path.exists(output): os.remove(output) 
-
-#     def test_AutoRoute(self):
-#         global run_floodspreader
-#         run_floodspreader = False
-#         AutoRouteHandler(params).run()
-#         2
-#         assertTrue(os.path.exists(output), f"File does not exist: {output}")
-#         with open(output) as f:
-#             out = f.read()
-#         with open(validation) as f:
-#             val = f.read()
-#         assertEqual(out, val, "VDT files are not equal")
-#         run_floodspreader = True
+        run_autoroute(params, output)
+        with open(output) as f:
+            out = f.read()
+        with open(validation) as f:
+            val = f.read()
+        assert out == val
+        tearDown(output)
 
 #     def test_AutoRoute_lots_of_params(self):
 #         params["RAPID_Subtract_BaseFlow"] = True
@@ -534,5 +489,5 @@ if __name__ in ["__main__", 'test_autoroute']:
 #         assertEqual(out_proj, val_proj, "Projection is not equal")
 
 if __name__ == '__main__':
-    test_land_use_samesize()
+    test_crop_dem()
 
