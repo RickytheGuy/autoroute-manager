@@ -221,7 +221,7 @@ class AutoRoute:
         self.multiprocess_data = multiprocessing.Manager().dict()
         self.DISABLE_PBAR = False
 
-        self.AUTOROUTE_PYTHON_MAIN: Callable = "" # Hidden
+        self.AUTOROUTE_PYTHON_MAIN: Callable = None # Hidden
         self.USE_PYTHON = False
         self.AUTOROUTE = ""
         self.FLOODSPREADER = ""
