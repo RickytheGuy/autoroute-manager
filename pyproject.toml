@@ -40,7 +40,10 @@ test = ["pytest"]
 fast = ["libgdal-arrow-parquet"]
 
 [tool.setuptools]
-py-modules = []
+#py-modules = []
+#packages = ["src.autoroute_manager"]
+package-dir = {"" = "src"}
 
-[project.scripts]
-ar_webui = "autoroute_manager.webui:ui"
+
+#[project.scripts]
+#r_webui = "autoroute_manager.webui:ui"
