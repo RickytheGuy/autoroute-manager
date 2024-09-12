@@ -15,20 +15,20 @@ manager = uim.ManagerFacade()
 
 # TODO allow ID for all input files
 
-def shutdown(signum, server):
-    """
-    When closing python script, shutdown the server
-    """
-    print()
-    print('Shutting down...')
-    demo.close()
-    exit()
+def launch_interface():
+    def shutdown(signum, server):
+        """
+        When closing python script, shutdown the server
+        """
+        print()
+        print('Shutting down...')
+        demo.close()
+        exit()
 
-signal.signal(signal.SIGINT, shutdown) # Control 
-if not uim.SYSTEM == 'Windows':
-    signal.signal(signal.SIGTSTP, shutdown)
+    signal.signal(signal.SIGINT, shutdown) # Control 
+    if not uim.SYSTEM == 'Windows':
+        signal.signal(signal.SIGTSTP, shutdown)
 
-if __name__ == '__main__':
     manager.init()
 
     with gr.Blocks(title='AutoRoute WebUI') as demo:
@@ -576,3 +576,10 @@ if __name__ == '__main__':
                 debug=True,
                 show_error=True
             )
+    
+
+def main():
+    launch_interface()
+
+if __name__ == "__main__":
+    main()

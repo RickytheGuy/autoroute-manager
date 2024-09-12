@@ -47,5 +47,5 @@ fast = ["libgdal-arrow-parquet"]
 package-dir = {"" = "src"}
 
 
-#[project.scripts]
-#r_webui = "autoroute_manager.webui:ui"
+[project.scripts]
+webui = "autoroute_manager.webui.ui:main"
