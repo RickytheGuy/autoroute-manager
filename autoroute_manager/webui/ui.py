@@ -4,18 +4,16 @@ UI designed to easily use AutoRoute and FloodSpreader. Tools to create input fil
 Louis "Ricky" Rosas
 BYU HydroInformatics Lab
 """
-import gradio as gr
-import sys
 import signal
-import logging
-
-import helper_funcs as hp
 import datetime
-manager = hp.ManagerFacade()
 
-logging.basicConfig(level=logging.INFO,
-                    stream=sys.stdout,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+import gradio as gr
+
+from autoroute_manager import LOG
+import autoroute_manager.webui.ui_manager as uim
+manager = uim.ManagerFacade()
+
+# TODO allow ID for all input files
 
 def shutdown(signum, server):
     """
@@ -27,7 +25,7 @@ def shutdown(signum, server):
     exit()
 
 signal.signal(signal.SIGINT, shutdown) # Control 
-if not hp.SYSTEM == 'Windows':
+if not uim.SYSTEM == 'Windows':
     signal.signal(signal.SIGTSTP, shutdown)
 
 if __name__ == '__main__':
@@ -141,9 +139,9 @@ if __name__ == '__main__':
                                                 info="Force overwrite of existing files. Will take the longest time.")
                             with gr.Column():
                                 buffer = gr.Checkbox(value=manager.default("buffer"),
-                                                        visible=False,
+                                                        visible=True,
                                                     label='Buffer',
-                                                    info='Buffer the DEMs?',
+                                                    info='Buffer the DEMs for AutoRoute?',
                                                     interactive=True)
                                 buffer_distance = gr.Number(value=manager.default("buffer_distance"),
                                                             label='Buffer Distance',
@@ -512,7 +510,7 @@ if __name__ == '__main__':
                     run_button.click(fn=manager._run, inputs=inputs, outputs=[])
                 except Exception as e:
                     gr.Error(e)
-                    logging.error(e)
+                    LOG.error(e)
                                                 
                 save_button.click(fn=manager.save, inputs=inputs, outputs=[])
                 get_ids_button.click(fn=manager.get_ids, inputs=[dem, strm_lines, minx, miny, maxx, maxy, ids_folder, streamlines_id_col], outputs=[])

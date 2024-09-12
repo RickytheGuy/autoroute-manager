@@ -11,8 +11,21 @@ channels:
 ```
 Create a new enviroment from the environment yaml file included like so:
 
-COMING SOON....
+```
+conda env create -f environment.yml
+conda activate manager
+```
 
+### ARC
+To use Mike Follum's [Automated Rating Curve generator (ARC)](https://github.com/MikeFHS/automated-rating-curve), please enter the following into you terminal (ensure that you are in the same environment as above):
+
+```bash
+git clone https://github.com/RickytheGuy/automated-rating-curve-byu.git
+cd automated-rating-curve-byu
+pip install .
+```
+
+Now our custom wrapper for ARC wil be available in this environment, in the webui, and as a CLI tool (try typing `arc -help` after running the above).
 
 ### GDAL for AutoRoute (Windows)
 AutoRoute, as it currently stands, was compiled on Windows with GDAL 2.2.3. Assuming your windows is 64 bit, download gdal-202-1700-x64-core.msi [here](https://www.gisinternals.com/query2.html?content=filelist&file=release-1700-x64-gdal-2-2-3-mapserver-7-0-7.zip). Run the installer. By default, it will try to install GDAL either in Program Files or in the top level C:\.

@@ -1,0 +1,16 @@
+name: manager
+channels:
+  - conda-forge
+dependencies:
+  - geopandas
+  - pyyaml
+  - tqdm
+  - gdal>=3.8
+  - pyproj
+  - gradio
+  - contextily
+  - xarray
+  - matplotlib
+
+
+

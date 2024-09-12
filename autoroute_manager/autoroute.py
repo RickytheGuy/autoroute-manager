@@ -1,25 +1,24 @@
-import logging
 import hashlib
 import os
 import math
 import glob
 import multiprocessing
-from typing import Tuple, Any, List, Set, Callable, Union, TextIO
 import subprocess
 import asyncio
 import json
-import importlib.util
-import traceback
+from typing import Tuple, Any, List, Set, Callable, Union, TextIO
 
-import fiona
+import pyogrio
 import yaml
 import tqdm
 import geopandas as gpd
 import pandas as pd
 import numpy as np
-from osgeo import gdal, osr
+from osgeo import gdal, osr, ogr
 from shapely.geometry import box
 from pyproj import Transformer
+
+from autoroute_manager import LOG
 
 # Optional imports:
 # - xarray
@@ -27,15 +26,8 @@ from pyproj import Transformer
 # GDAL setups
 os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = 'TRUE' # Set to avoid reading really large folders
 os.environ["GDAL_NUM_THREADS"] = 'ALL_CPUS'
+os.environ["PYOGRIO_USE_ARROW"] = "1"
 gdal.UseExceptions()
-
-
-if (spec := importlib.util.find_spec('pyogrio')) is not None:
-    GPD_ENGINE = "pyogrio"
-    if int(gdal.VersionInfo()) >= 3060000 and importlib.util.find_spec('pyogrio') is not None:
-        os.environ["PYOGRIO_USE_ARROW"] = "1"
-else:
-    GPD_ENGINE = "fiona"
 
 if gdal.GetDriverByName("Parquet") is not None:
     # If gdal parquet library is installed, use it because its faster/better compression
@@ -44,7 +36,7 @@ else:
     GEOMETRY_SAVE_EXTENSION = "gpkg"
     
 
-class AutoRouteHandler:
+class AutoRoute:
     def __init__(self, 
                  yaml: str = None) -> None:
         """
@@ -64,8 +56,16 @@ class AutoRouteHandler:
                 for key, value in tmp.items():
                     self._file_hash_dict[key] = value
 
+    def clear_temp_files(self) -> None:
+        """
+        Clear all temporary files created by the program
+        """
+        for root, _, files in os.walk(os.path.join(self.DATA_DIR, 'tmp')):
+            for f in files:
+                os.remove(os.path.join(root, f))
+
     def run(self) -> None:
-        logging.info("Starting model run...")
+        LOG.info("Starting model run...")
         dems = []
         strms = []
         lus = []
@@ -80,7 +80,7 @@ class AutoRouteHandler:
             elif os.path.isfile(self.DEM_FOLDER):
                 dems = {self.DEM_FOLDER}
             elif not os.path.exists(self.DEM_FOLDER):
-                logging.error(f"DEM folder {self.DEM_FOLDER} does not exist. Exiting...")
+                LOG.error(f"DEM folder {self.DEM_FOLDER} does not exist. Exiting...")
                 return
         else:
             if self.BUFFER_FILES:
@@ -92,35 +92,38 @@ class AutoRouteHandler:
         if self.EXTENT:
             dems = {dem for dem in dems if self.is_in_extent(dem, self.EXTENT)}
         if not dems:
-            logging.warning(f"No DEMs found!!")
+            LOG.warning(f"No DEMs found!!")
             return
         processes = min(len(dems), os.cpu_count())
         n_dems = len(dems)
         mifns = None
         with multiprocessing.Pool(processes=processes) as pool:
             if self.BUFFER_FILES and self.DEM_FOLDER:
-                logging.info(f"Buffering {n_dems} DEM(s)...")
+                LOG.info(f"Buffering {n_dems} DEM(s)...")
                 dems = list(tqdm.tqdm(pool.imap_unordered(self.buffer_dem, dems), disable=self.DISABLE_PBAR))
 
             elif self.CROP and self.EXTENT and self.DEM_FOLDER:
-                logging.info(f"Cropping {n_dems} DEM(s)...")
+                LOG.info(f"Cropping {n_dems} DEM(s)...")
                 dems = list(tqdm.tqdm(pool.imap_unordered(self.crop, dems), total=len(dems), disable=self.DISABLE_PBAR))
 
             if self.STREAM_NETWORK_FOLDER:
+                if self.STREAM_ID == None:
+                    LOG.error(f"No stream id provided! Aborting...")
+                    return
                 strms_dems = self.map_dems_and_streams(dems)
-                logging.info(f"Creating stream rasters for {n_dems} DEM(s)...")
+                LOG.info(f"Creating stream rasters for {n_dems} DEM(s)...")
                 strms = tqdm.tqdm(pool.imap_unordered(self.create_strm_file, strms_dems), total=len(strms_dems), disable=self.DISABLE_PBAR) # TODO fix total
                 strms = [strm for strm_list in strms for strm in strm_list if strm]
             else:
-                logging.error("No stream network folder or stream name provided. Exiting...")
+                LOG.error("No stream network folder or stream name provided. Exiting...")
                 return
             
             n_strms = len(strms)
             if n_strms != n_dems:
-                logging.warning(f"Only {n_strms} stream files were created out of {n_dems} DEMs")
+                LOG.warning(f"Only {n_strms} stream files were created out of {n_dems} DEMs")
 
             if self.LAND_USE_FOLDER:
-                logging.info(f"Creating land use rasters for {n_dems} DEM(s)...")
+                LOG.info(f"Creating land use rasters for {n_dems} DEM(s)...")
                 lus = list(tqdm.tqdm(pool.imap_unordered(self.create_land_use, dems), 
                                      total=len(dems), disable=self.DISABLE_PBAR))
 
@@ -141,7 +144,7 @@ class AutoRouteHandler:
                 mifns = pool.starmap(self.create_mifn_file, pairs)
                 mifns = [mifn for mifn in mifns if mifn]
                 if len(mifns) != n_dems:
-                    logging.warning(f"Only {len(mifns)} mifn files were created out of {n_dems} DEMs")
+                    LOG.warning(f"Only {len(mifns)} mifn files were created out of {n_dems} DEMs")
 
             if self.AUTOROUTE:
                 set(tqdm.tqdm(pool.imap_unordered(self.run_autoroute, mifns), total=len(mifns), 
@@ -149,19 +152,20 @@ class AutoRouteHandler:
 
             if self.FLOODSPREADER:
                 if not self.FLOOD_FLOWFILE:
-                    logging.warning("FloodSpreader requires a flood flow file. Will not run...")
+                    LOG.warning("FloodSpreader requires a flood flow file. Will not run...")
                 else:
                     set(tqdm.tqdm(pool.imap_unordered(self.run_floodspreader, mifns), total=len(mifns), 
                                   desc='Running FloodSpreader', disable=self.DISABLE_PBAR))
-                    logging.info('FloodSpreader finished')
+                    LOG.info('FloodSpreader finished')
 
             if self.CLEAN_OUTPUTS:
                 set(tqdm.tqdm(pool.imap_unordered(self.optimize_outputs, mifns), total=len(mifns), 
                               desc="Optimizing outputs", disable=self.DISABLE_PBAR))
 
-            logging.info("Finished processing all inputs\n")
+            LOG.info("Finished processing all inputs\n")
         
         self.save_hashes()
+        self.clear_temp_files()
  
     def setup(self, yaml_file: Union[dict, str]) -> None:
         """
@@ -217,7 +221,7 @@ class AutoRouteHandler:
         self.multiprocess_data = multiprocessing.Manager().dict()
         self.DISABLE_PBAR = False
 
-        self.AUTOROUTE_PYTHON_MAIN: Callable = "" # Hidden
+        self.AUTOROUTE_PYTHON_MAIN: Callable = None # Hidden
         self.USE_PYTHON = False
         self.AUTOROUTE = ""
         self.FLOODSPREADER = ""
@@ -282,7 +286,7 @@ class AutoRouteHandler:
                     setattr(self, key, value)
 
         if not self.DATA_DIR:
-            logging.warning(f'No working folder provided! Using {os.getcwd()}')
+            LOG.warning(f'No working folder provided! Using {os.getcwd()}')
             self.DATA_DIR = os.getcwd()
         if not os.path.isabs(self.DATA_DIR):
             self.DATA_DIR = os.path.abspath(self.DATA_DIR)
@@ -345,20 +349,23 @@ class AutoRouteHandler:
         projection = ds.GetProjection()
         no_data_value = ds.GetRasterBand(1).GetNoDataValue()
 
-        # try:
-        #     srs = osr.SpatialReference(wkt=ds.GetProjection())
-        #     if srs.IsProjected():
-        #         units = srs.GetLinearUnitsName()
-        #     else:
-        #         units = srs.GetAngularUnitsName()
-        #     if 'degree' in units:
-        #         buffer_distance = 0.1 # Buffer by 0.1 degrees
-        #     elif 'meter' in units and not 'k' in units:
-        #         buffer_distance = 10_000 # Buffer by 10 km
-        #     else:
-        #         raise NotImplementedError(f'Unsupported units: {units}')
-        # except Exception as e:
-        #     logging.error(f'Error buffering dem: \n{e}')
+        srs = osr.SpatialReference(wkt=projection)
+        if srs.IsProjected():
+            units = srs.GetLinearUnitsName().lower()
+        else:
+            units = srs.GetAngularUnitsName().lower()
+
+        buffer_distance = self.BUFFER_DISTANCE
+        if 'degree' in units:
+            pass
+        elif ('meter' in units or 'metre' in units):
+            if 'k' in units:
+                buffer_distance = 10
+            else:   
+                buffer_distance = 10_000 # Buffer by 10 km
+        else:
+            LOG.warning(f"Unknown units: {units}. Assuming degrees")
+        
         buffer_distance = self.BUFFER_DISTANCE
         minx, miny, maxx,maxy = self.get_ds_extent(ds)
         ds = None
@@ -379,10 +386,10 @@ class AutoRouteHandler:
 
         dems = self.find_dems_in_extent(extent=(minx, miny, maxx, maxy))
         if not dems:
-            logging.warning(f'Somehow no dems found in this extent: {(minx, miny, maxx, maxy)}')
+            LOG.warning(f'Somehow no dems found in this extent: {(minx, miny, maxx, maxy)}')
             return
         
-        vrt_options = gdal.BuildVRTOptions(resampleAlg='lanczos',
+        vrt_options = gdal.BuildVRTOptions(resampleAlg='nearest',
                                             outputSRS=projection,
                                             srcNodata=no_data_value,
                                             outputBounds=(minx, miny, maxx, maxy))
@@ -403,7 +410,7 @@ class AutoRouteHandler:
     def open_w_gdal(self, path: str) -> gdal.Dataset:
         ds = gdal.OpenEx(path)
         if not ds:
-            logging.warning(f'Could not open {path}. Is this a valid file?')
+            LOG.warning(f'Could not open {path}. Is this a valid file?')
         return ds
     
     def get_ds_extent(self, ds: gdal.Dataset) -> Tuple[float, ...]:
@@ -418,8 +425,6 @@ class AutoRouteHandler:
         """
         Reads .parquet, .shp, .gpkg, and potentially others and returns in a way we expect.
         """
-        global GPD_ENGINE
-
         # Handle case where columns contain None or are empty
         if columns and (None in columns or not columns):
             columns = None
@@ -433,7 +438,7 @@ class AutoRouteHandler:
             if bbox:
                 df = df[df.geometry.intersects(bbox)]
         elif path.endswith((".shp", ".gpkg")):
-            df = gpd.read_file(path, bbox=bbox, engine=GPD_ENGINE)
+            df = gpd.read_file(path, bbox=bbox)
             if columns:
                 df = df[columns]
         else:
@@ -467,8 +472,7 @@ class AutoRouteHandler:
         # Get the total extent of all the DEMS
         big_minx, big_miny, big_maxx, big_maxy = None, None, None, None
         for dem in dems:
-            ds = self.open_w_gdal(dem)
-            if not ds: continue
+            if not (ds := self.open_w_gdal(dem)): continue
             minx, miny, maxx, maxy = self.get_ds_extent(ds)
             big_minx = min(minx, big_minx) if big_minx else minx
             big_miny = min(miny, big_miny) if big_miny else miny
@@ -485,88 +489,30 @@ class AutoRouteHandler:
             return output
         
 
-        if self.STREAM_ID == None:
-            logging.warning(f"No stream id provided. We will try to assume that the first column is the id. If this is not the case, please provide the stream id.")
-        
-        tmp_streams = os.path.join(self.DATA_DIR, 'tmp', f"temp_streams_{hash(strms)}.{GEOMETRY_SAVE_EXTENSION}")
-        # if len(strms) > 1:
-        try:
-            dfs = []
-            for f in strms:
-                with fiona.open(f, 'r') as src:
-                    crs = src.crs
-                if ds_epsg != crs.to_epsg():
-                    transformer = Transformer.from_crs(f"EPSG:{ds_epsg}", crs.to_string(), always_xy=True) 
-                    minx2, miny2 = transformer.transform(big_minx, big_miny)
-                    maxx2, maxy2 =  transformer.transform(big_maxx, big_maxy)
-                    bbox = box(minx2, miny2, maxx2, maxy2)
-                else:
-                    bbox = box(big_minx, big_miny, big_maxx, big_maxy)
-                try:
-                    df = self.gpd_read(f, columns=[self.STREAM_ID, 'geometry'], bbox=bbox)
-                except NotImplementedError:
-                    logging.warning(f"Skipping unsupported file: {f}")
-                    continue
-                except ValueError as e:
-                    logging.error(f"Cannot find {self.STREAM_ID} in {f}")
-                    raise e
-                
-                if not df.empty:
-                    dfs.append(df.to_crs(ds_epsg))
-            df = gpd.GeoDataFrame(pd.concat(dfs, ignore_index=True))
-            
-            if self.STREAM_ID is None or self.STREAM_ID == []:
-                logging.info(f"Setting stream id as {df.columns[0]}")
-                self.STREAM_ID = df.columns[0]
-            
-            if GEOMETRY_SAVE_EXTENSION == "parquet":
-                df.to_parquet(tmp_streams)
-            else:
-                df.to_file(tmp_streams)
-        except KeyError as e:
-            logging.error(f"{self.STREAM_ID} not found in the stream files here: {self.STREAM_NETWORK_FOLDER}")
-            return
-        # else:
-        #     with fiona.open(strms[0], 'r') as src:
-        #         crs = src.crs
-        #     if ds_epsg != crs.to_epsg():
-        #         df = self.gpd_read(strms[0], columns=[self.STREAM_ID, 'geometry'], bbox=bbox)
-        #         projection = self.get_projection_from_gdf(df)
-        #         options = gdal.RasterizeOptions(attribute=self.STREAM_ID, outputType=gdal.GDT_UInt32,
-        #                                         # Assume no negative IDs. DO NOT SET TO UINT64 
-        #                                         format='GTiff', outputSRS=projection, 
-        #                                         creationOptions=["COMPRESS=DEFLATE", "PREDICTOR=2"], 
-        #                                         outputBounds=(minx, miny, maxx, maxy), noData=0, 
-        #                                         width=width, height=height,
-        #         )
-        #     else:
-        #         tmp_streams = strms[0]
+
 
         for dem in dems:
             strm_raster = os.path.join(self.DATA_DIR, 'stream_files', f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__strm.tif")
             if strm_raster in output: continue
-            
             ds = self.open_w_gdal(dem)
-            minx, miny, maxx, maxy = self.get_ds_extent(ds)
-            width=ds.RasterXSize
-            height=ds.RasterYSize
-            projection = ds.GetProjection()
+            strm_ds: gdal.Dataset = gdal.GetDriverByName('GTiff').Create(strm_raster, xsize=ds.RasterXSize, ysize=ds.RasterYSize, bands=1, eType=gdal.GDT_UInt32)
+            strm_ds.SetGeoTransform(ds.GetGeoTransform())
+            strm_ds.SetProjection(ds.GetProjection())
+            strm_ds.GetRasterBand(1).SetNoDataValue(0)
             ds = None
-            options = gdal.RasterizeOptions(attribute=self.STREAM_ID,
-                                outputType=gdal.GDT_UInt32, # Assume no negative IDs. DO NOT SET TO UINT64
-                                format='GTiff',
-                                outputSRS=projection,
-                                creationOptions=["COMPRESS=DEFLATE", "PREDICTOR=2"],
-                                outputBounds=(minx, miny, maxx, maxy),
-                                noData=0,
-                                width=width,
-                                height=height,
-            )
-            gdal.Rasterize(strm_raster, tmp_streams, options=options)
+            
+            for strm in strms:
+                strms_geom: ogr.DataSource = gdal.OpenEx(strm)
+                layer = strms_geom.GetLayer()
+                gdal.RasterizeLayer(strm_ds, [1], layer, options=[f"ATTRIBUTE={self.STREAM_ID}"])
+                strms_geom = None
+
+            strm_ds.FlushCache()
+            strm_ds = None
+
             self.update_hash(strm_raster, dem)
             output.append(strm_raster)
-        if len(strms) > 1:
-            os.remove(tmp_streams)
+
         return output
 
     def create_row_col_id_file(self, strm: str) -> str:
@@ -583,7 +529,7 @@ class AutoRouteHandler:
                 try:
                     import xarray as xr
                 except ImportError:
-                    logging.error("Please install xarray to read netcdf files")
+                    LOG.error("Please install xarray to read netcdf files")
                     return
                 try:
                     df = (xr.open_dataset(self.SIMULATION_FLOWFILE)
@@ -591,14 +537,14 @@ class AutoRouteHandler:
                         .reset_index() # This gets the first column back instead of being an index
                     )
                 except OSError:
-                    logging.error("Please install netcdf4 to read netcdf files")
+                    LOG.error("Please install netcdf4 to read netcdf files")
                     return
                     
             if not self.SIMULATION_ID_COLUMN:
                 self.SIMULATION_ID_COLUMN =df.columns[0]
                 self.multiprocess_data['SIMULATION_ID_COLUMN'] = df.columns[0]
             if self.SIMULATION_ID_COLUMN not in df:
-                logging.warning(f"The id field you've entered is not in the file\nids entered: {self.SIMULATION_ID_COLUMN}, columns found: {list(df)}\n\tWe will assume the first column is the id column: {df.columns[0]}")
+                LOG.warning(f"The id field you've entered is not in the file\nids entered: {self.SIMULATION_ID_COLUMN}, columns found: {list(df)}\n\tWe will assume the first column is the id column: {df.columns[0]}")
                 self.SIMULATION_ID_COLUMN = df.columns[0]
                 self.multiprocess_data['SIMULATION_ID_COLUMN'] = df.columns[0]
             if not self.SIMULATION_FLOW_COLUMN:
@@ -623,7 +569,7 @@ class AutoRouteHandler:
             )
             df = df[cols]
             if df.empty:
-                logging.error(f"No data in the flow file: {self.SIMULATION_FLOWFILE}")
+                LOG.error(f"No data in the flow file: {self.SIMULATION_FLOWFILE}")
                 return
         else:
             raise NotImplementedError(f"Unsupported file type: {self.SIMULATION_FLOWFILE}")
@@ -638,7 +584,7 @@ class AutoRouteHandler:
         matches = df[df[self.SIMULATION_ID_COLUMN].isin(values)].shape[0]
 
         if matches == 0:
-            logging.warning(f"{matches} id(s) out of {df.shape[0]} from your input file are present in the stream raster...")
+            LOG.warning(f"{matches} id(s) out of {df.shape[0]} from your input file are present in the stream raster...")
         
         (
             pd.DataFrame({'ROW': indices[0], 'COL': indices[1], self.SIMULATION_ID_COLUMN: values})
@@ -666,7 +612,7 @@ class AutoRouteHandler:
                 .dropna()
             )
             if df.empty:
-                logging.error(f"No data in the flow file: {self.FLOOD_FLOWFILE}")
+                LOG.error(f"No data in the flow file: {self.FLOOD_FLOWFILE}")
                 return
         else:
             raise NotImplementedError(f"Unsupported file type: {self.FLOOD_FLOWFILE}")
@@ -692,7 +638,7 @@ class AutoRouteHandler:
             return lu_file
         dem_ds = self.open_w_gdal(dem)
         if not dem_ds: 
-            logging.warning(f'Could not open {dem}. Skipping...')
+            LOG.warning(f'Could not open {dem}. Skipping...')
             return
         
         dem_epsg = self.get_epsg(dem_ds)
@@ -710,10 +656,10 @@ class AutoRouteHandler:
             filenames = [self.LAND_USE_FOLDER]
 
         if not self.check_has_same_projection(filenames):
-            logging.error("Some land use files have different projections. Exiting...")
+            LOG.error("Some land use files have different projections. Exiting...")
             raise NotImplementedError("Different projections")
         if not filenames:
-            logging.warning(f"No land use files found in {self.LAND_USE_FOLDER}")
+            LOG.warning(f"No land use files found in {self.LAND_USE_FOLDER}")
             return
         
         # Loop over every file in the land use folder and check if it intersects with the dem
@@ -726,7 +672,7 @@ class AutoRouteHandler:
         for f in filenames:
             ds = self.open_w_gdal(f)
             if not ds: 
-                logging.warning(f'Could not open {f}. Skipping...')
+                LOG.warning(f'Could not open {f}. Skipping...')
                 continue
             minx2, miny2, maxx2, maxy2 = self.get_ds_extent(ds)
             if dem_epsg != lu_epsg:
@@ -736,13 +682,13 @@ class AutoRouteHandler:
             if self.is_in_extent(ds, (minx2, miny2, maxx2, maxy2)):
                 if ds.ReadAsArray().max() > 100:
                     msg = f"Land use file {f} has values over 100. AutoRoute cannot read this. Please reclassify."
-                    logging.error(msg)
+                    LOG.error(msg)
                     raise ValueError(msg)
                 files_to_use.append(f)
             ds = None
         
         if not files_to_use:
-            logging.warning(f"No land use files found in the extent of {dem}")
+            LOG.warning(f"No land use files found in the extent of {dem}")
             return
         
         if dem_epsg != lu_epsg:
@@ -777,7 +723,7 @@ class AutoRouteHandler:
                 if ds_code != self.get_epsg(self.open_w_gdal(f)):
                     return False
         except:
-            logging.warning(f"Problems with a file")
+            LOG.warning(f"Problems with a file")
             return False
         return True
 
@@ -792,7 +738,7 @@ class AutoRouteHandler:
     def crop(self, dem: str) -> str:
         ds = self.open_w_gdal(dem)
         if not ds:
-            logging.warning(f'Could not open {dem}. Skipping...')
+            LOG.warning(f'Could not open {dem}. Skipping...')
             return
         projection = ds.GetProjection()
         no_data_value = ds.GetRasterBand(1).GetNoDataValue()
@@ -805,9 +751,8 @@ class AutoRouteHandler:
         maxx = min(maxx, self.EXTENT[2])
         maxy = min(maxy, self.EXTENT[3])
 
-        cropped_dem = os.path.join(self.DATA_DIR, 'dems', 'cropped', os.path.splitext(os.path.basename(dem))[0] + '_crop.tif')
+        cropped_dem = os.path.join(self.DATA_DIR, 'dems', 'cropped', os.path.splitext(os.path.basename(dem))[0] + '_crop.vrt')
         if not self.OVERWRITE and os.path.exists(cropped_dem) and self.hash_match(dem, cropped_dem):
-            #logging.info(f"{cropped_dem} already exists. Skipping...")
             return
 
         vrt_options = gdal.BuildVRTOptions(resampleAlg='nearest',
@@ -815,7 +760,6 @@ class AutoRouteHandler:
                                         srcNodata=no_data_value,
                                         outputBounds=(minx, miny, maxx, maxy))
         gdal.BuildVRT(cropped_dem, dem, options=vrt_options)
-        self.update_hash(dem, cropped_dem)
         return cropped_dem
             
     def create_mifn_file(self, dem: str, strm: str, lu: str, rapid_flow_file: str, flowfile: str) -> str:
@@ -878,21 +822,21 @@ class AutoRouteHandler:
 
             self._write(output,'RowCol_From_RAPIDFile')
             if not self.SIMULATION_ID_COLUMN:
-                logging.warning('Flow ID is not specified!!')
+                LOG.warning('Flow ID is not specified!!')
             else:
                 if self.USE_PYTHON:
                     self._write(output,'Flow_File_ID',self.SIMULATION_ID_COLUMN)
                 else:
                     self._write(output,'RAPID_Flow_ID', self.SIMULATION_ID_COLUMN)
             if not self.SIMULATION_FLOW_COLUMN:
-                logging.warning('Flow Params are not specified!!')
+                LOG.warning('Flow Params are not specified!!')
             else:
                 if not isinstance(self.SIMULATION_FLOW_COLUMN, list):
                     self.SIMULATION_FLOW_COLUMN = [self.SIMULATION_FLOW_COLUMN]
                 self._write(output,'RAPID_Flow_Param', " ".join(self.SIMULATION_FLOW_COLUMN))
             if self.RAPID_Subtract_BaseFlow:
                 if not self.BASE_FLOW_COLUMN:
-                    logging.warning('Base Flow Parameter is not specified, not subtracting baseflow')
+                    LOG.warning('Base Flow Parameter is not specified, not subtracting baseflow')
                 else:
                     if self.USE_PYTHON:
                         self._write(output,'Flow_File_BF',self.BASE_FLOW_COLUMN)
@@ -932,7 +876,7 @@ class AutoRouteHandler:
         if self.use_prev_d_4_xs == 0:
             self._write(output,'Use_Prev_D_4_XS',0)
         elif self.use_prev_d_4_xs != 1:
-            logging.warning('Use_Prev_D_4_XS must be 0 or 1. Will use AutoRoute\'s default value of 1')
+            LOG.warning('Use_Prev_D_4_XS must be 0 or 1. Will use AutoRoute\'s default value of 1')
         self._write(output,'ADJUST_FLOW_BY_FRACTION',self.adjust_flow)
         if self.Str_Limit_Val: self._write(output,'Str_Limit_Val',self.Str_Limit_Val)
         if not math.isinf(self.UP_Str_Limit_Val) and self.UP_Str_Limit_Val > 0: self._write(output,'UP_Str_Limit_Val',self.UP_Str_Limit_Val)
@@ -949,7 +893,7 @@ class AutoRouteHandler:
             self._check_type('Land Use', lu_raster, ['.tif', '.vrt'])
             self._write(output,'LU_Raster_SameRes',lu_raster)
             if not self.MANNINGS_TABLE:
-                logging.warning('No mannings table for the Land Use raster!')
+                LOG.warning('No mannings table for the Land Use raster!')
             else:
                 if not os.path.isabs(self.MANNINGS_TABLE):
                     self.MANNINGS_TABLE = os.path.abspath(self.MANNINGS_TABLE)
@@ -1035,7 +979,7 @@ class AutoRouteHandler:
             elif self.omit_outliers == 'Specify Depth' and self.specify_depth:
                 self._write(output,'FloodSpreader_SpecifyDepth',self.specify_depth)
             else:
-                logging.warning(f'Unknown outlier omission option: {self.omit_outliers}')
+                LOG.warning(f'Unknown outlier omission option: {self.omit_outliers}')
 
         if self.twd_factor != 1.5:
             self._write(output,'TopWidthDistanceFactor',self.twd_factor)
@@ -1123,11 +1067,11 @@ class AutoRouteHandler:
     def _warn_DNE(self, card: str, value: str) -> None:
         if value:
             if not os.path.exists(value):
-                logging.warning(f"The file {value} for {card} does not exist: ")
+                LOG.warning(f"The file {value} for {card} does not exist: ")
 
     def _check_type(self, card: str, value: str, types: List[str]) -> None:
         if not any(value.endswith(t) for t in types):
-            logging.warning(f"{card} is {os.path.basename(value)}, which does not have a valid file type ({','.join(types)})")
+            LOG.warning(f"{card} is {os.path.basename(value)}, which does not have a valid file type ({','.join(types)})")
     
     def _zip_files(self, *args) -> Set[Tuple[str]]:
         """"
@@ -1159,22 +1103,20 @@ class AutoRouteHandler:
                     self.AUTOROUTE_PYTHON_MAIN(mifn)
                 except Exception as e:
                     msg = f'Error running AutoRoutePy'
-                    logging.error(msg)
+                    LOG.error(msg)
                     raise e
                 return
             
             exe = self._format_path(self.AUTOROUTE.strip())
             if not os.path.exists(exe):
-                logging.error(f"AutoRoute executable not found: {exe}")
+                LOG.error(f"AutoRoute executable not found: {exe}")
                 return
             mifn = self._format_path(mifn.strip())
-            with open(mifn) as f:
-                contents = f.read()
 
             vdt = self.get_item_from_mifn(mifn, key='Print_VDT_Database')
-
-            if vdt and os.path.exists(vdt) and not self.OVERWRITE and self.hash_match(vdt, contents):
-                    return
+            contents = open(vdt).read()
+            if not self.OVERWRITE and vdt and os.path.exists(vdt) and self.hash_match(vdt, contents):
+                return
 
             process = subprocess.run(f'conda activate {self.AUTOROUTE_CONDA_ENV} && echo "a" | {exe} {mifn}', # We echo a dummy input in so that AutoRoute can terminate if some input is wrong
                                      stdout=subprocess.PIPE,
@@ -1187,20 +1129,20 @@ class AutoRouteHandler:
                     break
                 
             if line:
-                logging.error(f"Error running AutoRoute: {line}")
+                LOG.error(f"Error running AutoRoute: {line}")
             elif process.returncode != 0:
-                logging.error(f"Error running AutoRoute: {process.stderr.decode('utf-8')}")
+                LOG.error(f"Error running AutoRoute: {process.stderr.decode('utf-8')}")
 
             self.update_hash(vdt, contents)
             return process.stdout.decode('utf-8') + process.stderr.decode('utf-8')
         except Exception as e:
-            logging.error(f"Python error running autoroute: {traceback.format_exc()}")
+            LOG.error(f"Error running autoroute: {e}")
 
     def run_floodspreader(self, mifn: str) -> None:
         try:
             exe = self._format_path(self.FLOODSPREADER.strip())
             if not os.path.exists(exe):
-                logging.error(f"FloodSpreader executable not found: {exe}")
+                LOG.error(f"FloodSpreader executable not found: {exe}")
                 return
             
             mifn = self._format_path(mifn.strip())
@@ -1222,7 +1164,7 @@ class AutoRouteHandler:
                                      stderr=subprocess.PIPE,
                                      shell=True,)
         except Exception as e:
-            logging.error(f"Error running floodspreader: {e}")
+            LOG.error(f"Error running floodspreader: {e}")
             return e
 
         line = ''
@@ -1232,9 +1174,9 @@ class AutoRouteHandler:
                 break
             
         if line:
-            logging.error(f"Error running FloodSpreader: {line}")
+            LOG.error(f"Error running FloodSpreader: {line}")
         elif process.returncode != 0:
-            logging.error(f"Error running FloodSpreader: {process.stderr.decode('utf-8')}")
+            LOG.error(f"Error running FloodSpreader: {process.stderr.decode('utf-8')}")
             
         self.update_hash(mifn, *maps)
         return process.stdout.decode('utf-8') + process.stderr.decode('utf-8')
@@ -1250,7 +1192,7 @@ class AutoRouteHandler:
                 return ""
             return df[key].values[0]
         except Exception as e:
-            logging.error(f"Error reading '{key}' from {mifn}: {e}")
+            LOG.error(f"Error reading '{key}' from {mifn}: {e}")
             return ""
 
     def test_ok(self):
@@ -1260,7 +1202,7 @@ class AutoRouteHandler:
                                         stderr=asyncio.subprocess.PIPE,
                                         shell=True,)
             if process.returncode != 0:
-                logging.error(f"Error activating conda environment: {process.stderr.decode('utf-8')}")
+                LOG.error(f"Error activating conda environment: {process.stderr.decode('utf-8')}")
                 raise ValueError(f"Error activating conda environment: {process.stderr.decode('utf-8')}")
             
     def optimize_outputs(self, mifn: str):
@@ -1304,7 +1246,7 @@ class AutoRouteHandler:
                 ds = None
                 self.update_hash(m)
         except Exception as e:
-            logging.error(f"Error cleaning outputs: {e}")
+            LOG.error(f"Error cleaning outputs: {e}")
 
     def create_fname(self, minx: float, miny: float, maxx: float, 
                      maxy: float,_type: str = '.vrt',append: str = '') -> str:
@@ -1354,15 +1296,18 @@ class AutoRouteHandler:
             streams = [self.STREAM_NETWORK_FOLDER]
         if not streams:
             msg = f"No stream files found in {self.STREAM_NETWORK_FOLDER}"
-            logging.error(msg)
+            LOG.error(msg)
             raise FileNotFoundError(msg)
         
         streams_list = []
         for stream in streams:
-            with fiona.open(stream, 'r') as src:
-                crs = src.crs
-                f_extent = src.bounds
-                streams_list.append((stream, crs, f_extent))
+            # with fiona.open(stream, 'r') as src:
+            #     crs = src.crs
+            #     f_extent = src.bounds
+            data = pyogrio.read_info(stream)
+            crs_epsg = int(data['crs'].split(':')[1])
+            f_extent = data['total_bounds']
+            streams_list.append((stream, crs_epsg, f_extent))
                 
         dems_list = []
         for dem in dems:
@@ -1374,10 +1319,10 @@ class AutoRouteHandler:
         mapping_dict = {}
         for dem, ds_epsg, dem_extent in dems_list:
             mapping_dict[dem] = []
-            for stream_name, crs, f_extent in streams_list:
+            for stream_name, crs_epsg, f_extent in streams_list:
                 minx, miny, maxx, maxy = dem_extent
-                if ds_epsg != crs.to_epsg():
-                    transformer = Transformer.from_crs(f"EPSG:{ds_epsg}", crs.to_string(), always_xy=True)
+                if ds_epsg != crs_epsg:
+                    transformer = Transformer.from_crs(f"EPSG:{ds_epsg}", f"EPSG:{crs_epsg}", always_xy=True)
                     minx, miny = transformer.transform(minx, miny)
                     maxx, maxy = transformer.transform(maxx, maxy)
                 if self._isin(minx, miny, maxx, maxy, f_extent):
@@ -1386,7 +1331,7 @@ class AutoRouteHandler:
         invertion = {}
         for dem, streams in mapping_dict.items():
             if not streams:
-                logging.warning(f"No stream files found that intersect {dem}")
+                LOG.warning(f"No stream files found that intersect {dem}")
                 continue
             s = tuple(streams)
             if s not in invertion:
