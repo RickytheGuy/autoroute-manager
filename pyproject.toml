@@ -12,7 +12,9 @@ dependencies = [
   "geopandas",
   "gdal>=3.8",
   "pyyaml",
-  "tqdm"
+  "tqdm",
+  "contextily",
+  "pyproj"
 ]
 requires-python = ">= 3.10"
 authors = [
