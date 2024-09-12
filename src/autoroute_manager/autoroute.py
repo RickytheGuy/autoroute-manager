@@ -624,10 +624,12 @@ class AutoRoute:
 
         ids = np.unique(data_array)[1:]
         
-        (
-            df[df[id_col].isin(ids)]
-            .to_csv(flowfile,index=False)
-        )
+        df = df[df[id_col].isin(ids)]
+        if df.empty:
+            LOG.warning(f"No ids from {self.FLOOD_FLOWFILE} in {strm}")
+        return 
+    
+        df.to_csv(flowfile,index=False)
         self.update_hash(flowfile, self.FLOOD_FLOWFILE, strm)
         return flowfile
 
