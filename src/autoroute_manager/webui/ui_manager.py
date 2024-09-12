@@ -239,6 +239,7 @@ class ManagerFacade():
             f.write(json.dumps(to_write, indent=4))
             
         LOG.info("Parameters saved!")
+        gr.Info("Parameters saved!")
 
     #@staticmethod
     def _format_files(self,file_path: str) -> str:
