@@ -9,6 +9,7 @@ import subprocess
 import asyncio
 import json
 import importlib.util
+import traceback
 
 import fiona
 import yaml
@@ -1167,11 +1168,13 @@ class AutoRouteHandler:
                 logging.error(f"AutoRoute executable not found: {exe}")
                 return
             mifn = self._format_path(mifn.strip())
+            with open(mifn) as f:
+                contents = f.read()
 
             vdt = self.get_item_from_mifn(mifn, key='Print_VDT_Database')
-            contents = open(vdt).read()
-            if not self.OVERWRITE and vdt and os.path.exists(vdt) and self.hash_match(vdt, contents):
-                return
+
+            if vdt and os.path.exists(vdt) and not self.OVERWRITE and self.hash_match(vdt, contents):
+                    return
 
             process = subprocess.run(f'conda activate {self.AUTOROUTE_CONDA_ENV} && echo "a" | {exe} {mifn}', # We echo a dummy input in so that AutoRoute can terminate if some input is wrong
                                      stdout=subprocess.PIPE,
@@ -1191,7 +1194,7 @@ class AutoRouteHandler:
             self.update_hash(vdt, contents)
             return process.stdout.decode('utf-8') + process.stderr.decode('utf-8')
         except Exception as e:
-            logging.error(f"Error running autoroute: {e}")
+            logging.error(f"Python error running autoroute: {traceback.format_exc()}")
 
     def run_floodspreader(self, mifn: str) -> None:
         try:
