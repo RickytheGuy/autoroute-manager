@@ -76,7 +76,6 @@ class AutoRoute:
             if os.path.isdir(self.DEM_FOLDER):
                 # Get all .tif files in the folder and subfolders using walkdir
                 dems = {os.path.join(root, f) for root, _, files in os.walk(self.DEM_FOLDER) for f in files if f.lower().endswith((".tif", ".vrt"))}
-                #dems = {os.path.join(self.DEM_FOLDER,f) for f in os.listdir(self.DEM_FOLDER) if f.lower().endswith((".tif", ".vrt"))}
             elif os.path.isfile(self.DEM_FOLDER):
                 dems = {self.DEM_FOLDER}
             elif not os.path.exists(self.DEM_FOLDER):
@@ -97,6 +96,7 @@ class AutoRoute:
         processes = min(len(dems), os.cpu_count())
         n_dems = len(dems)
         mifns = None
+        num_runs = self.num_runs()
         with multiprocessing.Pool(processes=processes) as pool:
             if self.BUFFER_FILES and self.DEM_FOLDER:
                 LOG.info(f"Buffering {n_dems} DEM(s)...")
@@ -112,60 +112,101 @@ class AutoRoute:
                     return
                 strms_dems = self.map_dems_and_streams(dems)
                 LOG.info(f"Creating stream rasters for {n_dems} DEM(s)...")
-                strms = tqdm.tqdm(pool.imap_unordered(self.create_strm_file, strms_dems), total=len(strms_dems), disable=self.DISABLE_PBAR) # TODO fix total
-                strms = [strm for strm_list in strms for strm in strm_list if strm]
+                with tqdm.tqdm(pool.imap_unordered(self.create_strm_file, strms_dems), total=len(strms_dems), disable=self.DISABLE_PBAR) as strms_bar: # TODO fix total
+                    strms = [strm for strm_list in strms_bar for strm in strm_list if strm]
             else:
                 LOG.error("No stream network folder or stream name provided. Exiting...")
                 return
             
             n_strms = len(strms)
+            if n_strms == 0:
+                LOG.error("No stream files created. Exiting...")
+                return
             if n_strms != n_dems:
                 LOG.warning(f"Only {n_strms} stream files were created out of {n_dems} DEMs")
 
+            lus = []
             if self.LAND_USE_FOLDER:
                 LOG.info(f"Creating land use rasters for {n_dems} DEM(s)...")
                 lus = list(tqdm.tqdm(pool.imap_unordered(self.create_land_use, dems), 
                                      total=len(dems), disable=self.DISABLE_PBAR))
+                if not lus:
+                    LOG.warning("No land use files created...")
 
             if not self.DEM_FOLDER and self.EXTENT:
                 strms = {strm for strm in strms if self.is_in_extent(strm, self.EXTENT)}
+            if not strms:
+                LOG.error("No stream files found. Exiting...")
+                return
             if strms and self.SIMULATION_FLOWFILE:
+                LOG.info(f"Creating row col id files for {n_strms} DEM(s)...")
                 sim_flow_files =list(tqdm.tqdm(pool.imap_unordered(self.create_row_col_id_file, strms), 
-                                               total=len(strms),desc='Creating row col id files', disable=self.DISABLE_PBAR))
+                                               total=n_strms,desc='Creating row col id files', disable=self.DISABLE_PBAR))
                 if self.multiprocess_data.get('SIMULATION_ID_COLUMN', False):
                     self.SIMULATION_ID_COLUMN = self.multiprocess_data['SIMULATION_ID_COLUMN']
 
             if self.FLOOD_FLOWFILE:
+                LOG.info(f"Creating flood flow files for {n_strms} DEM(s)...")
                 flood_files =list(tqdm.tqdm(pool.imap_unordered(self.create_flood_flowfile, strms), 
-                                            total=len(strms),desc='Creating flow files', disable=self.DISABLE_PBAR))
+                                            total=n_strms,desc='Creating flow files', disable=self.DISABLE_PBAR))
             
             pairs = self._zip_files(dems, strms, lus, sim_flow_files, flood_files)
             if self.AUTOROUTE or self.FLOODSPREADER:
+                LOG.info(f"Creating mifn files for {len(pairs)} DEM(s)...")
                 mifns = pool.starmap(self.create_mifn_file, pairs)
                 mifns = [mifn for mifn in mifns if mifn]
+                if not mifns:
+                    LOG.warning("No mifn files created...")
                 if len(mifns) != n_dems:
                     LOG.warning(f"Only {len(mifns)} mifn files were created out of {n_dems} DEMs")
 
-            if self.AUTOROUTE:
-                set(tqdm.tqdm(pool.imap_unordered(self.run_autoroute, mifns), total=len(mifns), 
+            if mifns and self.AUTOROUTE:
+                LOG.info(f"Running AutoRoute on {len(mifns)} DEM(s)...")
+                list(tqdm.tqdm(pool.imap_unordered(self.run_autoroute, mifns), total=len(mifns), 
                               desc="Running AutoRoute", disable=self.DISABLE_PBAR))
 
-            if self.FLOODSPREADER:
+            if mifns and self.FLOODSPREADER:
                 if not self.FLOOD_FLOWFILE:
                     LOG.warning("FloodSpreader requires a flood flow file. Will not run...")
                 else:
-                    set(tqdm.tqdm(pool.imap_unordered(self.run_floodspreader, mifns), total=len(mifns), 
+                    LOG.info(f"Running FloodSpreader on {len(mifns)} DEM(s)...")
+                    list(tqdm.tqdm(pool.imap_unordered(self.run_floodspreader, mifns), total=len(mifns), 
                                   desc='Running FloodSpreader', disable=self.DISABLE_PBAR))
                     LOG.info('FloodSpreader finished')
 
             if self.CLEAN_OUTPUTS:
-                set(tqdm.tqdm(pool.imap_unordered(self.optimize_outputs, mifns), total=len(mifns), 
+                LOG.info(f"Cleaning outputs for {len(mifns)} DEM(s)...")
+                list(tqdm.tqdm(pool.imap_unordered(self.optimize_outputs, mifns), total=len(mifns), 
                               desc="Optimizing outputs", disable=self.DISABLE_PBAR))
 
             LOG.info("Finished processing all inputs\n")
         
         self.save_hashes()
         self.clear_temp_files()
+ 
+    def num_runs(self):
+        num = 0 
+        if (self.BUFFER_FILES and self.DEM_FOLDER) or (self.CROP and self.EXTENT and self.DEM_FOLDER):
+            num += 1
+        if self.STREAM_NETWORK_FOLDER:
+            num += 1
+        if self.LAND_USE_FOLDER:
+            num += 1
+        if self.STREAM_NETWORK_FOLDER and self.SIMULATION_FLOWFILE:
+            num += 1
+        if self.FLOOD_FLOWFILE:
+            num += 1
+        if self.AUTOROUTE or self.FLOODSPREADER:
+            num += 1
+        if self.AUTOROUTE:
+            num += 1
+        if self.FLOODSPREADER:
+            num += 1
+        if self.CLEAN_OUTPUTS:
+            num += 1
+            
+        return num
+        
  
     def setup(self, yaml_file: Union[dict, str]) -> None:
         """
@@ -286,12 +327,11 @@ class AutoRoute:
                     setattr(self, key, value)
 
         if not self.DATA_DIR:
-            LOG.warning(f'No working folder provided! Using {os.getcwd()}')
-            self.DATA_DIR = os.getcwd()
+            self.DATA_DIR = os.path.join(os.getcwd(), 'data_dir')
+            LOG.warning(f'No working folder provided! Using {self.DATA_DIR}')
         if not os.path.isabs(self.DATA_DIR):
             self.DATA_DIR = os.path.abspath(self.DATA_DIR)
         os.makedirs(self.DATA_DIR, exist_ok = True)
-        #os.chdir(self.DATA_DIR)
         with open(os.path.join(self.DATA_DIR,'This is the working folder. Please delete and modify with caution.txt'), 'a') as f:
             pass
 
@@ -478,7 +518,6 @@ class AutoRoute:
             big_miny = min(miny, big_miny) if big_miny else miny
             big_maxx = max(maxx, big_maxx) if big_maxx else maxx
             big_maxy = max(maxy, big_maxy) if big_maxy else maxy
-            ds_epsg = self.get_epsg(ds)
             ds = None
             
             strm_raster = os.path.join(self.DATA_DIR, 'stream_files', f"{os.path.splitext(os.path.basename(dem))[0]}__strm.tif")
@@ -488,9 +527,6 @@ class AutoRoute:
         if len(output) == len(dems):
             return output
         
-
-
-
         for dem in dems:
             strm_raster = os.path.join(self.DATA_DIR, 'stream_files', f"{os.path.basename(dem).split('.')[0].replace('_buff','')}__strm.tif")
             if strm_raster in output: continue
@@ -503,7 +539,12 @@ class AutoRoute:
             
             for strm in strms:
                 strms_geom: ogr.DataSource = gdal.OpenEx(strm)
-                layer = strms_geom.GetLayer()
+                layer: ogr.Layer = strms_geom.GetLayer()
+                # test if self.stream_id is in the layer
+                if not self.STREAM_ID in [f.name for f in layer.schema]:
+                    msg = f"Stream ID '{self.STREAM_ID}' not found in the stream network file. Skipping..."
+                    LOG.error(msg)
+                    raise ValueError(msg)
                 gdal.RasterizeLayer(strm_ds, [1], layer, options=[f"ATTRIBUTE={self.STREAM_ID}"])
                 strms_geom = None
 
@@ -1099,75 +1140,72 @@ class AutoRoute:
         return output
 
     def run_autoroute(self, mifn: str) -> None:
-        try:
-            if self.USE_PYTHON:
-                try:
-                    self.AUTOROUTE_PYTHON_MAIN(mifn)
-                except Exception as e:
-                    msg = f'Error running AutoRoutePy'
-                    LOG.error(msg)
-                    raise e
-                return
+        if self.USE_PYTHON:
+            try:
+                self.AUTOROUTE_PYTHON_MAIN(mifn)
+            except Exception as e:
+                msg = f'Error running AutoRoutePy'
+                LOG.error(msg)
+                raise e
+            return
+        
+        exe = self._format_path(self.AUTOROUTE.strip())
+        if not os.path.exists(exe):
+            LOG.error(f"AutoRoute executable not found: {exe}")
+            return
+        mifn = self._format_path(mifn.strip())
+
+        vdt = self.get_item_from_mifn(mifn, key='Print_VDT_Database')
+        if not self.OVERWRITE and vdt and os.path.exists(vdt) and self.hash_match(vdt, open(vdt).read()):
+            return
+
+        process = subprocess.run(f'conda activate {self.AUTOROUTE_CONDA_ENV} && echo "a" | {exe} {mifn}', # We echo a dummy input in so that AutoRoute can terminate if some input is wrong
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                    shell=True,)
+        line = ''
+        for l in process.stdout.decode('utf-8').splitlines():
+            if 'error' in l.lower() and not any({'Perimeter' in l, 'Area' in l,  'Finder' in l}) or 'PROBLEMS' in l:
+                line = l + process.stderr.decode('utf-8')
+                break
             
-            exe = self._format_path(self.AUTOROUTE.strip())
-            if not os.path.exists(exe):
-                LOG.error(f"AutoRoute executable not found: {exe}")
-                return
-            mifn = self._format_path(mifn.strip())
+        if line:
+            LOG.error(f"Error running AutoRoute: {line}")
+        elif process.returncode != 0:
+            LOG.error(f"Error running AutoRoute: {process.stderr.decode('utf-8')}")
 
-            vdt = self.get_item_from_mifn(mifn, key='Print_VDT_Database')
-            contents = open(vdt).read()
-            if not self.OVERWRITE and vdt and os.path.exists(vdt) and self.hash_match(vdt, contents):
-                return
-
-            process = subprocess.run(f'conda activate {self.AUTOROUTE_CONDA_ENV} && echo "a" | {exe} {mifn}', # We echo a dummy input in so that AutoRoute can terminate if some input is wrong
-                                     stdout=subprocess.PIPE,
-                                     stderr=subprocess.PIPE,
-                                     shell=True,)
-            line = ''
-            for l in process.stdout.decode('utf-8').splitlines():
-                if 'error' in l.lower() and not any({'Perimeter' in l, 'Area' in l,  'Finder' in l}) or 'PROBLEMS' in l:
-                    line = l + process.stderr.decode('utf-8')
-                    break
-                
-            if line:
-                LOG.error(f"Error running AutoRoute: {line}")
-            elif process.returncode != 0:
-                LOG.error(f"Error running AutoRoute: {process.stderr.decode('utf-8')}")
-
-            self.update_hash(vdt, contents)
+        if not os.path.exists(vdt):
+            LOG.error(f"AutoRoute did not create a vdt file: {vdt}")
             return process.stdout.decode('utf-8') + process.stderr.decode('utf-8')
-        except Exception as e:
-            LOG.error(f"Error running autoroute: {e}")
+        
+        self.update_hash(vdt, open(vdt).read())
+        return process.stdout.decode('utf-8') + process.stderr.decode('utf-8')
+
 
     def run_floodspreader(self, mifn: str) -> None:
-        try:
-            exe = self._format_path(self.FLOODSPREADER.strip())
-            if not os.path.exists(exe):
-                LOG.error(f"FloodSpreader executable not found: {exe}")
-                return
-            
-            mifn = self._format_path(mifn.strip())
+        exe = self._format_path(self.FLOODSPREADER.strip())
+        if not os.path.exists(exe):
+            LOG.error(f"FloodSpreader executable not found: {exe}")
+            return
+        
+        mifn = self._format_path(mifn.strip())
 
-            fld_map = self.get_item_from_mifn(mifn, key='OutFLD')
-            dep_map = self.get_item_from_mifn(mifn, key='OutDEP')
-            vel_map = self.get_item_from_mifn(mifn, key='OutVEL')
-            wse_map = self.get_item_from_mifn(mifn, key='OutWSE')
-            fs_bathy_file = self.get_item_from_mifn(mifn, key='FSOutBATHY')
-            maps = {fld_map, dep_map, vel_map, wse_map, fs_bathy_file} - {""}
-            
-            if not self.OVERWRITE and all(os.path.exists(m) for m in maps) and self.hash_match(mifn, *maps):
-                return
-            # We must remove these maps in order for FloodSpreader to succesfuly run
-            {os.remove(m) for m in maps if os.path.exists(m)}
-            
-            process = subprocess.run(f'conda activate {self.AUTOROUTE_CONDA_ENV} && echo "a" | {exe} {mifn}', # We echo a dummy input in so that AutoRoute can terminate if some input is wrong
-                                     stdout=subprocess.PIPE,
-                                     stderr=subprocess.PIPE,
-                                     shell=True,)
-        except Exception as e:
-            LOG.error(f"Error running floodspreader: {e}")
-            return e
+        fld_map = self.get_item_from_mifn(mifn, key='OutFLD')
+        dep_map = self.get_item_from_mifn(mifn, key='OutDEP')
+        vel_map = self.get_item_from_mifn(mifn, key='OutVEL')
+        wse_map = self.get_item_from_mifn(mifn, key='OutWSE')
+        fs_bathy_file = self.get_item_from_mifn(mifn, key='FSOutBATHY')
+        maps = {fld_map, dep_map, vel_map, wse_map, fs_bathy_file} - {""}
+        
+        if not self.OVERWRITE and all(os.path.exists(m) for m in maps) and self.hash_match(mifn, *maps):
+            return
+        # We must remove these maps in order for FloodSpreader to succesfuly run
+        {os.remove(m) for m in maps if os.path.exists(m)}
+        
+        process = subprocess.run(f'conda activate {self.AUTOROUTE_CONDA_ENV} && echo "a" | {exe} {mifn}', # We echo a dummy input in so that AutoRoute can terminate if some input is wrong
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                    shell=True,)
 
         line = ''
         for l in process.stdout.decode('utf-8').splitlines():
