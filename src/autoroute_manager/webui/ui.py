@@ -45,24 +45,14 @@ def launch_interface():
                                             label="Digital Elevation Model (DEM) Folder or File",
                                             #info=manager.default(\w+),
                                             )
-                            dem_name = gr.Textbox(value=manager.default('DEM_NAME'),
-                                                placeholder='Copernicus',
-                                                label='DEM Name',
-                                                visible=False
-                                                #info=manager.default(1),
-                                                )
+
                         with gr.Row():
                             strm_lines = gr.Textbox(value=manager.default("strm_lines"), 
                                                     placeholder='/User/Desktop/dem.tif',
                                                     label="Stream Lines Folder or File",
                                                     #info=manager.default('DEM'),
                                                     )
-                            strm_name = gr.Textbox(value=manager.default("strm_name"), 
-                                                placeholder='Copernicus',
-                                                label='Streamlines Name',
-                                                visible=False,
-                                                #info=manager.default('DEM_NAME'),
-                                                )
+
                             streamlines_id_col = gr.Dropdown(value=manager.default("flow_id"),
                                                 label='Streamlines ID Column',
                                                 #info='Specifies the stream identifier that AutoRoute uses. Leave blank to use the first column.',
@@ -77,12 +67,7 @@ def launch_interface():
                                                 label="Land Raster Folder or File",
                                                 #info=manager.default('DEM'),
                                                 )
-                            lu_name = gr.Textbox(value=manager.default("lu_name"),
-                                                placeholder='Copernicus',
-                                                label='Land Raster Name',
-                                                #info=manager.default('DEM_NAME'),
-                                                visible=False
-                                                )
+
                             LU_Manning_n = gr.Textbox(value=manager.default("LU_Manning_n"),
                                                     placeholder='/User/Desktop/mannings_n.txt',
                                                     label="Manning's n table",
@@ -95,20 +80,19 @@ def launch_interface():
                                         #info=manager.default('Comid_Flow_File')
                             )
 
-                        base_max_file = gr.Textbox(value=manager.default("base_max_file"),
+                        with gr.Row():
+                            base_max_file = gr.Textbox(value=manager.default("base_max_file"),
                                                 placeholder='/User/Desktop/flow_file.txt',
                                                 label="Base and Max Flow File",
                                                 #info=manager.default('Flow_RAPIDFile'),
-                        )
-                        with gr.Row():
-                            
-                            flow_params_ar = gr.Dropdown(value=manager.default("flow_params_ar"),
+                            )
+                            max_flow_column = gr.Dropdown(value=manager.default("flow_params_ar"),
                                                     label='Max Flow Column',
                                                     #info='Specifies the flow rates that AutoRoute uses. Leave blank to use all columns besides the first one.',
                                                     allow_custom_value=True,
                                                     multiselect=False,
                                                     interactive=True) # Careful
-                            flow_baseflow = gr.Dropdown(value=manager.default("flow_baseflow"),label='Base Flow Column',
+                            baseflow_col = gr.Dropdown(value=manager.default("flow_baseflow"),label='Base Flow Column',
                                                     #info='Specifies the base flow rates that AutoRoute uses. Leave blank to not use.',
                                                     allow_custom_value=True,
                                                     multiselect=False,
@@ -122,6 +106,13 @@ def launch_interface():
                                     placeholder='/User/Desktop/VDT/',
                                     label="VDT Folder (Optional)",
                                     info=manager.doc('vdt')
+                        )
+                        
+                        curve_file = gr.Textbox(value=manager.default("curve_file"),
+                                    placeholder='/User/Desktop/curve.txt',
+                                    label="Rating Curve Folder",
+                                    info="If empty, not rating curves will be generated",
+                                    visible=bool(manager.default("use_ar_python"))
                         )
 
                         with gr.Row():
@@ -184,6 +175,7 @@ def launch_interface():
                                                     visible=True
                                 )
                                 use_ar_python.change(lambda x: gr.Textbox(visible=not x), inputs=use_ar_python, outputs=ar_exe)
+                                use_ar_python.change(lambda x: gr.Textbox(visible=not x), inputs=use_ar_python, outputs=curve_file)
                                 
 
                                 fs_exe = gr.Textbox(value=manager.default("fs_exe"),
@@ -358,7 +350,7 @@ def launch_interface():
                                     value=manager.default("use_prev_d_4_xs"),
                                     label='Use Previous Depth for Cross Section',
                                     info=manager.doc('use_prev_d_4_xs'),
-                                    interactive=True
+                                    interactive=True,
                                 )
 
                                 weight_angles = gr.Number(value=manager.default("Weight_Angles"),
@@ -373,7 +365,7 @@ def launch_interface():
                                                 interactive=True,
                                                 )
                                 
-                            lu_name.change(manager.show_mans_n, [lu_name,LU_Manning_n], man_n)
+                            lu_file.change(manager.show_mans_n, [lu_file,LU_Manning_n], man_n)
 
                             with gr.Accordion('Bathymetry'):
                                 run_ar_bathy = gr.Checkbox(value=manager.default("run_ar_bathy"),
@@ -422,7 +414,7 @@ def launch_interface():
                                         bathy_method.change(manager.bathy_changes, bathy_method, [bathy_x_max_depth, bathy_y_shallow])
                                 
                                 run_ar_bathy.change(lambda x: gr.Row(visible=x), inputs=run_ar_bathy, outputs=bathy_row)
-                                base_max_file.change(manager.update_flow_params, base_max_file, [streamlines_id_col,flow_params_ar, flow_baseflow, da_flow_param])
+                                base_max_file.change(manager.update_flow_params, base_max_file, [streamlines_id_col,max_flow_column, baseflow_col, da_flow_param])
 
                     with gr.Column():
                         with gr.Accordion("FloodSpreader Parameters"):
@@ -498,7 +490,7 @@ def launch_interface():
                                         fs_bathy_smooth_method.change(lambda x: gr.Number(visible=True) if x[0] == 'I' else gr.Number(visible=False),
                                                                     fs_bathy_smooth_method, bathy_twd_factor)
                 
-                inputs = [dem,dem_name, strm_lines, strm_name, lu_file, lu_name, base_max_file, subtract_baseflow, streamlines_id_col, flow_params_ar, flow_baseflow, num_iterations,
+                inputs = [dem, curve_file, strm_lines,  gr.Text(visible=False), lu_file,  gr.Text(visible=False), base_max_file, subtract_baseflow, streamlines_id_col, max_flow_column, baseflow_col, num_iterations,
                                                         meta_file, convert_cfs_to_cms, x_distance, q_limit, LU_Manning_n, direction_distance, slope_distance, low_spot_distance, low_spot_is_meters,
                                                         low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, degree_manip, degree_interval, Str_Limit_Val, UP_Str_Limit_Val, row_start, row_end, use_prev_d_4_xs,
                                                         weight_angles, man_n, adjust_flow, bathy_alpha, ar_bathy_out_file, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,

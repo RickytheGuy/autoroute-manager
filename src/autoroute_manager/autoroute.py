@@ -97,7 +97,7 @@ class AutoRoute:
         if self.EXTENT:
             dems = {dem for dem in dems if self.is_in_extent(dem, self.EXTENT)}
         if not dems:
-            LOG.warning(f"No DEMs found!!")
+            LOG.error(f"No DEMs found!!")
             return
         processes = min(len(dems), os.cpu_count())
         n_dems = len(dems)
@@ -274,6 +274,7 @@ class AutoRoute:
         self.FLOODSPREADER = ""
         self.AUTOROUTE_CONDA_ENV = ""
 
+        self.curve_file = ""
         self.RAPID_Subtract_BaseFlow = False
         self.VDT = ""
         self.num_iterations = 15
@@ -883,7 +884,10 @@ class AutoRoute:
             else:
                 if not isinstance(self.SIMULATION_FLOW_COLUMN, list):
                     self.SIMULATION_FLOW_COLUMN = [self.SIMULATION_FLOW_COLUMN]
-                self._write(output,'RAPID_Flow_Param', " ".join(self.SIMULATION_FLOW_COLUMN))
+                if self.USE_PYTHON:
+                    self._write(output,'Flow_File_QMax', " ".join(self.SIMULATION_FLOW_COLUMN))
+                else:
+                    self._write(output,'RAPID_Flow_Param', " ".join(self.SIMULATION_FLOW_COLUMN))
             if self.RAPID_Subtract_BaseFlow:
                 if not self.BASE_FLOW_COLUMN:
                     LOG.warning('Base Flow Parameter is not specified, not subtracting baseflow')
@@ -901,16 +905,18 @@ class AutoRoute:
         else:
             vdt = os.path.join(self.DATA_DIR, 'vdts', f"{os.path.basename(dem).split('.')[0]}__vdt.txt")
         if self.USE_PYTHON:
-            if self.VDT:
-                curve_file = os.path.join(self._format_path(self.VDT), f"{os.path.basename(dem).split('.')[0]}__curve.txt")
-                if not os.path.isabs(vdt):
-                    vdt = os.path.abspath(vdt)
+            if self.curve_file:
+                curve_file = os.path.join(self._format_path(self.curve_file), f"{os.path.basename(dem).split('.')[0]}__curve.txt")
+                if not os.path.isabs(curve_file):
+                    curve_file = os.path.abspath(curve_file)
             else:
                 curve_file = os.path.join(self.DATA_DIR, 'curves', f"{os.path.basename(dem).split('.')[0]}__curve.txt")
             self._write(output,'Print_Curve_File',curve_file)    
             
         self._write(output,'Print_VDT_Database',vdt)
-        self._write(output,'Print_VDT_Database_NumIterations',self.num_iterations)
+        if not self.USE_PYTHON:
+            self._write(output,'Print_VDT_Database_NumIterations',self.num_iterations)
+            
 
         meta_file = self._format_path(meta_file)
         self._write(output,'Meta_File',meta_file)
@@ -975,10 +981,7 @@ class AutoRoute:
                 bathy_file = os.path.join(self.ar_bathy_file, f"{os.path.basename(dem).split('.')[0]}__ar_bathy.tif")
             else:
                 bathy_file = os.path.join(self.DATA_DIR, 'bathymetry', f"{os.path.basename(dem).split('.')[0]}__ar_bathy.tif")
-            if self.AUTOROUTE_PYTHON_MAIN:
-                self._write(output,'BATHY_Out_File',bathy_file)
-            else:
-                self._write(output,'BATHY_Out_File',bathy_file)
+            self._write(output,'BATHY_Out_File',bathy_file)
             self._write(output,'Bathymetry_Alpha',self.bathy_alpha)
             
 
@@ -986,19 +989,31 @@ class AutoRoute:
                 self._write(output,'Bathymetry_Method',0)
             elif self.bathy_method == 'Left Bank Quadratic':
                 self._write(output,'Bathymetry_Method', 1)
-                self._write(output,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
+                if self.USE_PYTHON:
+                    self._write(output, 'Bathy_Trap_H', self.bathy_x_max_depth)
+                else:
+                    self._write(output,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
                 self._write(output,'Bathymetry_YShallow',self.bathy_y_shallow)
             elif self.bathy_method == 'Right Bank Quadratic':
                 self._write(output,'Bathymetry_Method', 2)
-                self._write(output,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
+                if self.USE_PYTHON:
+                    self._write(output, 'Bathy_Trap_H', self.bathy_x_max_depth)
+                else:
+                    self._write(output,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
                 self._write(output,'Bathymetry_YShallow',self.bathy_y_shallow)
             elif self.bathy_method == 'Double Quadratic':
                 self._write(output,'Bathymetry_Method', 3)
-                self._write(output,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
+                if self.USE_PYTHON:
+                    self._write(output, 'Bathy_Trap_H', self.bathy_x_max_depth)
+                else:
+                    self._write(output,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
                 self._write(output,'Bathymetry_YShallow',self.bathy_y_shallow)
             elif self.bathy_method == 'Trapezoidal':
                 self._write(output,'Bathymetry_Method', 4)
-                self._write(output,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
+                if self.USE_PYTHON:
+                    self._write(output, 'Bathy_Trap_H', self.bathy_x_max_depth)
+                else:
+                    self._write(output,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
             else: self._write(output,'Bathymetry_Method', 5)
 
         if self.da_flow_param: self._write(output, 'RAPID_DA_or_Flow_Param',self.da_flow_param)
@@ -1007,86 +1022,87 @@ class AutoRoute:
         self._write(output,'# FloodSpreader Inputs')
         output.append('\n')
 
-        if flowfile:
-            id_flow_file = self._format_path(flowfile)
-            self._warn_DNE('ID Flow File', id_flow_file)
-            self._check_type('ID Flow File', id_flow_file, ['.txt','.csv'])
-            self._write(output,'Comid_Flow_File',id_flow_file)
+        if self.FLOODSPREADER and os.path.exists(self.FLOODSPREADER):
+            if flowfile:
+                id_flow_file = self._format_path(flowfile)
+                self._warn_DNE('ID Flow File', id_flow_file)
+                self._check_type('ID Flow File', id_flow_file, ['.txt','.csv'])
+                self._write(output,'Comid_Flow_File',id_flow_file)
 
-        if self.omit_outliers:
-            if self.omit_outliers == 'Flood Bad Cells':
-                self._write(output,'Flood_BadCells')
-            elif self.omit_outliers == 'Use AutoRoute Depths':
-                self._write(output,'FloodSpreader_Use_AR_Depths')
-            elif self.omit_outliers == 'Smooth Water Surface Elevation':
-                self._write(output,'FloodSpreader_SmoothWSE')
-                self._write(output,'FloodSpreader_SmoothWSE_SearchDist',self.wse_search_dist)
-                self._write(output,'FloodSpreader_SmoothWSE_FractStDev',self.wse_threshold)
-                if self.wse_remove_three:
-                    self._write(output,'FloodSpreader_SmoothWSE_RemoveHighThree')
-            elif self.omit_outliers == 'Use AutoRoute Depths (StDev)':
-                self._write(output,'FloodSpreader_Use_AR_Depths_StDev')
-            elif self.omit_outliers == 'Specify Depth' and self.specify_depth:
-                self._write(output,'FloodSpreader_SpecifyDepth',self.specify_depth)
-            else:
-                LOG.warning(f'Unknown outlier omission option: {self.omit_outliers}')
+            if self.omit_outliers:
+                if self.omit_outliers == 'Flood Bad Cells':
+                    self._write(output,'Flood_BadCells')
+                elif self.omit_outliers == 'Use AutoRoute Depths':
+                    self._write(output,'FloodSpreader_Use_AR_Depths')
+                elif self.omit_outliers == 'Smooth Water Surface Elevation':
+                    self._write(output,'FloodSpreader_SmoothWSE')
+                    self._write(output,'FloodSpreader_SmoothWSE_SearchDist',self.wse_search_dist)
+                    self._write(output,'FloodSpreader_SmoothWSE_FractStDev',self.wse_threshold)
+                    if self.wse_remove_three:
+                        self._write(output,'FloodSpreader_SmoothWSE_RemoveHighThree')
+                elif self.omit_outliers == 'Use AutoRoute Depths (StDev)':
+                    self._write(output,'FloodSpreader_Use_AR_Depths_StDev')
+                elif self.omit_outliers == 'Specify Depth' and self.specify_depth:
+                    self._write(output,'FloodSpreader_SpecifyDepth',self.specify_depth)
+                else:
+                    LOG.warning(f'Unknown outlier omission option: {self.omit_outliers}')
 
-        if self.twd_factor != 1.5:
-            self._write(output,'TopWidthDistanceFactor',self.twd_factor)
-        if self.only_streams: self._write(output,'FloodSpreader_JustStrmDepths')
-        if self.use_ar_top_widths: self._write(output,'FloodSpreader_Use_AR_TopWidth')
-        if self.flood_local: self._write(output,'FloodLocalOnly')
+            if self.twd_factor != 1.5:
+                self._write(output,'TopWidthDistanceFactor',self.twd_factor)
+            if self.only_streams: self._write(output,'FloodSpreader_JustStrmDepths')
+            if self.use_ar_top_widths: self._write(output,'FloodSpreader_Use_AR_TopWidth')
+            if self.flood_local: self._write(output,'FloodLocalOnly')
 
-        if self.DEPTH_MAP:
-            self.DEPTH_MAP = self._format_path(self.DEPTH_MAP)
-            os.makedirs(self.DEPTH_MAP, exist_ok=True)
-            if not os.path.isabs(self.DEPTH_MAP):
-                self.DEPTH_MAP = os.path.abspath(self.DEPTH_MAP)
-            depth_map = self._format_path(os.path.join(self.DEPTH_MAP, f"{os.path.basename(dem).split('.')[0]}__depth.tif"))
-            if self.OVERWRITE or not os.path.exists(depth_map):
-                self._check_type('Depth Map',depth_map,['.tif'])
-                self._write(output,'OutDEP',depth_map)
+            if self.DEPTH_MAP:
+                self.DEPTH_MAP = self._format_path(self.DEPTH_MAP)
+                os.makedirs(self.DEPTH_MAP, exist_ok=True)
+                if not os.path.isabs(self.DEPTH_MAP):
+                    self.DEPTH_MAP = os.path.abspath(self.DEPTH_MAP)
+                depth_map = self._format_path(os.path.join(self.DEPTH_MAP, f"{os.path.basename(dem).split('.')[0]}__depth.tif"))
+                if self.OVERWRITE or not os.path.exists(depth_map):
+                    self._check_type('Depth Map',depth_map,['.tif'])
+                    self._write(output,'OutDEP',depth_map)
 
-        if self.FLOOD_MAP:
-            self.FLOOD_MAP = self._format_path(self.FLOOD_MAP)
-            os.makedirs(self.FLOOD_MAP, exist_ok=True)
-            if not os.path.isabs(self.FLOOD_MAP):
-                self.FLOOD_MAP = os.path.abspath(self.FLOOD_MAP)
-            flood_map = self._format_path(os.path.join(self.FLOOD_MAP, f"{os.path.basename(dem).split('.')[0]}__flood.tif"))
-            if self.OVERWRITE or not os.path.exists(flood_map):
-                self._check_type('Flood Map',flood_map,['.tif'])
-                self._write(output,'OutFLD',flood_map)
+            if self.FLOOD_MAP:
+                self.FLOOD_MAP = self._format_path(self.FLOOD_MAP)
+                os.makedirs(self.FLOOD_MAP, exist_ok=True)
+                if not os.path.isabs(self.FLOOD_MAP):
+                    self.FLOOD_MAP = os.path.abspath(self.FLOOD_MAP)
+                flood_map = self._format_path(os.path.join(self.FLOOD_MAP, f"{os.path.basename(dem).split('.')[0]}__flood.tif"))
+                if self.OVERWRITE or not os.path.exists(flood_map):
+                    self._check_type('Flood Map',flood_map,['.tif'])
+                    self._write(output,'OutFLD',flood_map)
 
-        if self.VELOCITY_MAP:
-            self.VELOCITY_MAP = self._format_path(self.VELOCITY_MAP)
-            os.makedirs(self.VELOCITY_MAP, exist_ok=True)
-            if not os.path.isabs(self.VELOCITY_MAP):
-                self.VELOCITY_MAP = os.path.abspath(self.VELOCITY_MAP)
-            velocity_map = self._format_path(os.path.join(self.VELOCITY_MAP, f"{os.path.basename(dem).split('.')[0]}__vel.tif"))
-            if self.OVERWRITE or not os.path.exists(velocity_map):
-                self._check_type('Velocity Map',velocity_map,['.tif'])
-                self._write(output,'OutVEL',velocity_map)
+            if self.VELOCITY_MAP:
+                self.VELOCITY_MAP = self._format_path(self.VELOCITY_MAP)
+                os.makedirs(self.VELOCITY_MAP, exist_ok=True)
+                if not os.path.isabs(self.VELOCITY_MAP):
+                    self.VELOCITY_MAP = os.path.abspath(self.VELOCITY_MAP)
+                velocity_map = self._format_path(os.path.join(self.VELOCITY_MAP, f"{os.path.basename(dem).split('.')[0]}__vel.tif"))
+                if self.OVERWRITE or not os.path.exists(velocity_map):
+                    self._check_type('Velocity Map',velocity_map,['.tif'])
+                    self._write(output,'OutVEL',velocity_map)
 
-        if self.WSE_MAP:
-            self.WSE_MAP = self._format_path(self.WSE_MAP)
-            os.makedirs(self.WSE_MAP, exist_ok=True)
-            if not os.path.isabs(self.WSE_MAP):
-                self.WSE_MAP = os.path.abspath(self.WSE_MAP)
-            wse_map = self._format_path(os.path.join(self.WSE_MAP, f"{os.path.basename(dem).split('.')[0]}__wse.tif"))
-            if self.OVERWRITE or not os.path.exists(wse_map):
-                self._check_type('WSE Map',wse_map,['.tif'])
-                self._write(output,'OutWSE',wse_map)
+            if self.WSE_MAP:
+                self.WSE_MAP = self._format_path(self.WSE_MAP)
+                os.makedirs(self.WSE_MAP, exist_ok=True)
+                if not os.path.isabs(self.WSE_MAP):
+                    self.WSE_MAP = os.path.abspath(self.WSE_MAP)
+                wse_map = self._format_path(os.path.join(self.WSE_MAP, f"{os.path.basename(dem).split('.')[0]}__wse.tif"))
+                if self.OVERWRITE or not os.path.exists(wse_map):
+                    self._check_type('WSE Map',wse_map,['.tif'])
+                    self._write(output,'OutWSE',wse_map)
 
-        if self.run_bathymetry and self.fs_bathy_file: 
-            os.makedirs(self.fs_bathy_file, exist_ok=True)
-            if not os.path.isabs(self.fs_bathy_file):
-                self.fs_bathy_file = os.path.abspath(self.fs_bathy_file)
-            fs_bathy_file = os.path.join(self._format_path(self.fs_bathy_file), f"{os.path.basename(dem).split('.')[0]}__fs_bathy.tif")
-            self._write(output,'FSOutBATHY', fs_bathy_file)
-            if self.fs_bathy_smooth_method == 'Linear Interpolation':
-                self._write(output,'Bathy_LinearInterpolation')
-            elif self.fs_bathy_smooth_method == 'Inverse-Distance Weighted':
-                self._write(output,'BathyTopWidthDistanceFactor', self.bathy_twd_factor)
+            if self.run_bathymetry and self.fs_bathy_file: 
+                os.makedirs(self.fs_bathy_file, exist_ok=True)
+                if not os.path.isabs(self.fs_bathy_file):
+                    self.fs_bathy_file = os.path.abspath(self.fs_bathy_file)
+                fs_bathy_file = os.path.join(self._format_path(self.fs_bathy_file), f"{os.path.basename(dem).split('.')[0]}__fs_bathy.tif")
+                self._write(output,'FSOutBATHY', fs_bathy_file)
+                if self.fs_bathy_smooth_method == 'Linear Interpolation':
+                    self._write(output,'Bathy_LinearInterpolation')
+                elif self.fs_bathy_smooth_method == 'Inverse-Distance Weighted':
+                    self._write(output,'BathyTopWidthDistanceFactor', self.bathy_twd_factor)
 
         contents = "\n".join(output)
         with open(mifn, 'w', encoding='utf-8') as f:
@@ -1243,7 +1259,7 @@ class AutoRoute:
             return ""
 
     def test_ok(self):
-        if (self.AUTOROUTE or self.FLOODSPREADER) and not self.arc:
+        if (self.AUTOROUTE or self.FLOODSPREADER) and not self.USE_PYTHON:
             process = subprocess.run(f'conda activate {self.AUTOROUTE_CONDA_ENV}',
                                         stdout=asyncio.subprocess.PIPE,
                                         stderr=asyncio.subprocess.PIPE,

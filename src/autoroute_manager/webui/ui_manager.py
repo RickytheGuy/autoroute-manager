@@ -151,7 +151,7 @@ class ManagerFacade():
         Save the modified documentation and defaults
 
         order of args: 
-        0. dem, dem_name, strm_lines, strm_name, lu_file, 
+        0. dem, curve_file, strm_lines, strm_name, lu_file, 
         5. lu_name, base_max_file, subtract_baseflow, flow_id (streamlines_id_col), flow_params, 
         10. flow_baseflow, num_iterations,meta_file, convert_cfs_to_cms, x_distance, 
         15. q_limit, LU_Manning_n, direction_distance, slope_distance, low_spot_distance, 
@@ -173,9 +173,9 @@ class ManagerFacade():
                 "docs": self.docs,
                 "data": {
                     "DEM":args[0],
-                    "DEM_NAME":args[1],
+                    "curve_file":args[1],
                     "strm_lines":args[2],
-                    "strm_name":args[3],
+
                     "flow_id":args[8],
                     "ar_exe":args[67],
                     "fs_exe":args[68],
@@ -184,7 +184,7 @@ class ManagerFacade():
                     "use_prev_d_4_xs":args[31],
                     "man_n":args[33],
                     "lu_file":args[4],
-                    "lu_name":args[5],
+
                     "LU_Manning_n":args[16],
                     "base_max_file":args[6],
                     "Gen_Dir_Dist":args[17],
@@ -337,7 +337,7 @@ class ManagerFacade():
         else:
             return gr.Markdown(visible=False), gr.DataFrame(visible=False), gr.Textbox(visible=False)
 
-    async def _run(self,dem, dem_name, strm_lines, strm_name, lu_file, lu_name, base_max_file, subtract_baseflow, streamlines_id_col, flow_params_ar, flow_baseflow, num_iterations,
+    async def _run(self,dem, curve_file, strm_lines, strm_name, lu_file, lu_name, base_max_file, subtract_baseflow, streamlines_id_col, flow_params_ar, flow_baseflow, num_iterations,
                                                     meta_file, convert_cfs_to_cms, x_distance, q_limit, mannings_table, direction_distance, slope_distance, low_spot_distance, low_spot_is_meters,
                                                     low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, degree_manip, degree_interval, Str_Limit_Val, UP_Str_Limit_Val, row_start, row_end, use_prev_d_4_xs,
                                                     weight_angles, man_n, adjust_flow, bathy_alpha, ar_bathy, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
@@ -357,9 +357,7 @@ class ManagerFacade():
                   "DEM_FOLDER": self._format_files(dem),
                   "BUFFER_FILES": buffer,
                   "BUFFER_DISTANCE": buffer_distance,
-                  "DEM_NAME": dem_name,
                   "STREAM_NETWORK_FOLDER": self._format_files(strm_lines),
-                  "STREAM_NAME": strm_name,
                   "STREAM_ID": streamlines_id_col,
                   "SIMULATION_FLOWFILE": self._format_files(base_max_file),
                   "FLOOD_FLOWFILE":self._format_files(id_flow_file),
@@ -369,7 +367,6 @@ class ManagerFacade():
                   "EXTENT": extent,
                   "CROP": crop,
                   "LAND_USE_FOLDER": self._format_files(lu_file),
-                  "LAND_USE_NAME": lu_name,
                   "MANNINGS_TABLE": self._format_files(mannings_table),
                   "DEPTH_MAP": self._format_files(depth_map),
                   "FLOOD_MAP": self._format_files(flood_map),
@@ -383,6 +380,7 @@ class ManagerFacade():
                   "FLOODSPREADER": self._format_files(fs_exe),
                   "AUTOROUTE_CONDA_ENV": "autoroute",
 
+                    "curve_file": self._format_files(curve_file),
                   "RAPID_Subtract_BaseFlow": subtract_baseflow,
                   "VDT": self._format_files(vdt_file),
                   "num_iterations" : num_iterations,
