@@ -74,6 +74,11 @@ class ManagerFacade():
         ids_folder = self._format_files(args[6])
         flow_id = args[7]
         
+        if not ids_folder:
+            msg = "No output folder specified"
+            LOG.error(msg)
+            gr.Error(msg)
+            return
         if os.path.isdir(strm_lines):
             stream_files = [os.path.join(strm_lines,f) for f in os.listdir(strm_lines) if f.endswith(('.shp', '.gpkg', '.parquet', '.geoparquet'))]
         elif os.path.isfile(strm_lines):
@@ -106,18 +111,26 @@ class ManagerFacade():
             results = np.unique(results[0])
         else:
             results = np.unique(np.concatenate(results, axis=None))
-        pd.DataFrame({flow_id: results}).to_csv(output_file, index=False)
+        pd.DataFrame({flow_id: results}, dtype=int).to_csv(output_file, index=False)
         msg = f"IDs saved to {output_file}"
         LOG.info(msg)
         gr.Info(msg)
         
         
     def _get_ids(self, strm_file: str, extent: List[float], id_field: str) -> np.ndarray:
-        # with fiona.open(strm_file, 'r') as src:
-        #         crs = src.crs
-        #         f_extent = box(*src.bounds)
         data = pyogrio.read_info(strm_file)
-        crs_epsg = int(data['crs'].split(':')[1])
+
+        if not data['crs']:
+            if np.abs(np.asarray(data['total_bounds'])).max() <= 180:
+                crs_epsg = 4326
+            else:
+                msg = f"Could not determine the CRS for {strm_file}"
+                LOG.error(msg)
+                gr.Error(msg)
+                return np.array([])
+        else:
+            crs_epsg = int(data['crs'].split(':')[1])
+
         f_extent = box(*data['total_bounds'])
         if crs_epsg != 4326:
             transformer = Transformer.from_crs("EPSG:4326",f"EPSG:{crs_epsg}", always_xy=True) 
@@ -130,8 +143,6 @@ class ManagerFacade():
             return np.array([])
 
         gdf = self.manager.gpd_read(strm_file, columns=[id_field], bbox=bbox)
-        if not gdf.empty:
-            pass
         return gdf[id_field].to_numpy().astype(int)
         
     
@@ -336,6 +347,7 @@ class ManagerFacade():
         """
         Write the main input file
         """
+        gr.Info("Beginning model run!")
         if {minx, miny, maxx, maxy} == {0}:
             extent = None
         else:

@@ -56,6 +56,12 @@ class AutoRoute:
                 for key, value in tmp.items():
                     self._file_hash_dict[key] = value
 
+        try:
+            from arc_byu.arc import Arc
+            self.arc = Arc
+        except ModuleNotFoundError:
+            self.arc = None
+
     def clear_temp_files(self) -> None:
         """
         Clear all temporary files created by the program
@@ -75,7 +81,7 @@ class AutoRoute:
         if self.DEM_FOLDER:
             if os.path.isdir(self.DEM_FOLDER):
                 # Get all .tif files in the folder and subfolders using walkdir
-                dems = {os.path.join(root, f) for root, _, files in os.walk(self.DEM_FOLDER) for f in files if f.lower().endswith((".tif", ".vrt"))}
+                dems = {os.path.join(root, f) for root, _, files in os.walk(self.DEM_FOLDER) for f in files if f.lower().endswith((".tif", ".vrt")) and not f.startswith('.')}
             elif os.path.isfile(self.DEM_FOLDER):
                 dems = {self.DEM_FOLDER}
             elif not os.path.exists(self.DEM_FOLDER):
@@ -160,12 +166,12 @@ class AutoRoute:
                 if len(mifns) != n_dems:
                     LOG.warning(f"Only {len(mifns)} mifn files were created out of {n_dems} DEMs")
 
-            if mifns and self.AUTOROUTE:
+            if mifns and self.AUTOROUTE and os.path.exists(self.AUTOROUTE):
                 LOG.info(f"Running AutoRoute on {len(mifns)} DEM(s)...")
                 list(tqdm.tqdm(pool.imap_unordered(self.run_autoroute, mifns), total=len(mifns), 
                               desc="Running AutoRoute", disable=self.DISABLE_PBAR))
 
-            if mifns and self.FLOODSPREADER:
+            if mifns and self.FLOODSPREADER and os.path.exists(self.FLOODSPREADER):
                 if not self.FLOOD_FLOWFILE:
                     LOG.warning("FloodSpreader requires a flood flow file. Will not run...")
                 else:
@@ -668,7 +674,7 @@ class AutoRoute:
         df = df[df[id_col].isin(ids)]
         if df.empty:
             LOG.warning(f"No ids from {self.FLOOD_FLOWFILE} in {strm}")
-        return 
+            return 
     
         df.to_csv(flowfile,index=False)
         self.update_hash(flowfile, self.FLOOD_FLOWFILE, strm)
@@ -698,7 +704,7 @@ class AutoRoute:
         else:
             filenames = [self.LAND_USE_FOLDER]
 
-        if not self.check_has_same_projection(filenames):
+        if not self.all_files_match_projections(filenames):
             LOG.error("Some land use files have different projections. Exiting...")
             raise NotImplementedError("Different projections")
         if not filenames:
@@ -710,6 +716,7 @@ class AutoRoute:
         if dem_epsg != lu_epsg:
             out_spatial_ref = osr.SpatialReference()
             out_spatial_ref.ImportFromEPSG(lu_epsg)
+            out_spatial_ref.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
             coordTrans = osr.CoordinateTransformation(dem_spatial_ref, out_spatial_ref)
         files_to_use = []
         for f in filenames:
@@ -717,7 +724,7 @@ class AutoRoute:
             if not ds: 
                 LOG.warning(f'Could not open {f}. Skipping...')
                 continue
-            minx2, miny2, maxx2, maxy2 = self.get_ds_extent(ds)
+            minx2, miny2, maxx2, maxy2 = minx, miny, maxx, maxy
             if dem_epsg != lu_epsg:
                 minx2, miny2, _ = coordTrans.TransformPoint(minx, miny)
                 maxx2, maxy2, _ = coordTrans.TransformPoint(maxx, maxy)
@@ -758,7 +765,7 @@ class AutoRoute:
         self.hash_match(dem, lu_file)
         return lu_file
 
-    def check_has_same_projection(self, files: List[str]) -> bool:
+    def all_files_match_projections(self, files: List[str]) -> bool:
         if not files: return True
         try:
             ds_code = self.get_epsg(self.open_w_gdal(files[0]))
@@ -1236,7 +1243,7 @@ class AutoRoute:
             return ""
 
     def test_ok(self):
-        if self.AUTOROUTE or self.FLOODSPREADER:
+        if (self.AUTOROUTE or self.FLOODSPREADER) and not self.arc:
             process = subprocess.run(f'conda activate {self.AUTOROUTE_CONDA_ENV}',
                                         stdout=asyncio.subprocess.PIPE,
                                         stderr=asyncio.subprocess.PIPE,
@@ -1244,6 +1251,7 @@ class AutoRoute:
             if process.returncode != 0:
                 LOG.error(f"Error activating conda environment: {process.stderr.decode('utf-8')}")
                 raise ValueError(f"Error activating conda environment: {process.stderr.decode('utf-8')}")
+            return
             
     def optimize_outputs(self, mifn: str):
         try:
@@ -1341,11 +1349,8 @@ class AutoRoute:
         
         streams_list = []
         for stream in streams:
-            # with fiona.open(stream, 'r') as src:
-            #     crs = src.crs
-            #     f_extent = src.bounds
             data = pyogrio.read_info(stream)
-            crs_epsg = int(data['crs'].split(':')[1])
+            crs_epsg = self.assume_proj(data)
             f_extent = data['total_bounds']
             streams_list.append((stream, crs_epsg, f_extent))
                 
@@ -1379,6 +1384,13 @@ class AutoRoute:
             invertion[s].append(dem)
         
         return list(invertion.items())
+    
+    def assume_proj(self, data: dict) -> int:
+        if data['crs']:
+            return int(data['crs'].split(':')[1])
+        if np.abs(np.asarray(data['total_bounds'])).max() < 180:
+            return 4326
+        return 3857
             
     def save_hashes(self) -> None:
         with open(self._hash_file, 'w') as f:
