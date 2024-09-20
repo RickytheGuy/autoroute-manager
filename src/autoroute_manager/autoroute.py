@@ -71,6 +71,13 @@ class AutoRoute:
                 os.remove(os.path.join(root, f))
 
     def run(self) -> None:
+        if self.USE_PYTHON:
+            if not self.LAND_USE_FOLDER:
+                LOG.error("ARC requires a land use folder. Exiting...")
+                return
+            if not self.MANNINGS_TABLE:
+                LOG.error("ARC requires a Mannings Table. Exiting...")
+                return
         LOG.info("Starting model run...")
         dems = []
         strms = []
@@ -565,8 +572,7 @@ class AutoRoute:
     def create_row_col_id_file(self, strm: str) -> str:
         if not strm:
             return
-        if self.USE_PYTHON and self.SIMULATION_FLOWFILE.endswith(('.csv', '.txt')):
-            return self.SIMULATION_FLOWFILE
+
         row_col_file = os.path.join(self.DATA_DIR, 'rapid_files', f"{os.path.basename(strm).split('strm.')[0]}row_col_id.txt")
         if not self.OVERWRITE and os.path.exists(row_col_file) and self.hash_match(row_col_file, self.SIMULATION_FLOWFILE, strm):
             return row_col_file
@@ -648,8 +654,6 @@ class AutoRoute:
     def create_flood_flowfile(self, strm: str) -> str:
         if not strm:
             return
-        if self.USE_PYTHON and self.FLOOD_FLOWFILE.endswith(('.csv', '.txt')):
-            return self.SIMULATION_FLOWFILE
 
         flowfile = os.path.join(self.DATA_DIR, 'flow_files', f"{os.path.basename(strm).split('strm.')[0]}flow.txt")
         if not self.OVERWRITE and os.path.exists(flowfile) and self.hash_match(flowfile, self.FLOOD_FLOWFILE, strm):
@@ -736,7 +740,7 @@ class AutoRoute:
                 maxx2, maxy2, _ = coordTrans.TransformPoint(maxx, maxy)
                 
             if self.is_in_extent(ds, (minx2, miny2, maxx2, maxy2)):
-                if ds.ReadAsArray().max() > 100:
+                if ds.ReadAsArray().max() > 100 and not self.USE_PYTHON:
                     msg = f"Land use file {f} has values over 100. AutoRoute cannot read this. Please reclassify."
                     LOG.error(msg)
                     raise ValueError(msg)

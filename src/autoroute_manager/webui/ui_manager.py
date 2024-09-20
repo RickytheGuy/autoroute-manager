@@ -345,6 +345,17 @@ class ManagerFacade():
         """
         Write the main input file
         """
+        if use_ar_python:
+            if not lu_file:
+                msg = "Please specify a land use file when using ARC"
+                gr.Error(msg)
+                LOG.error(msg)
+                return
+            if not mannings_table:
+                msg = "Please specify a Mannings Table when using ARC"
+                gr.Error(msg)
+                LOG.error(msg)
+                return
         gr.Info("Beginning model run!")
         if {minx, miny, maxx, maxy} == {0}:
             extent = None
