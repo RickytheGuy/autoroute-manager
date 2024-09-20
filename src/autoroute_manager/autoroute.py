@@ -166,7 +166,7 @@ class AutoRoute:
                 if len(mifns) != n_dems:
                     LOG.warning(f"Only {len(mifns)} mifn files were created out of {n_dems} DEMs")
 
-            if mifns and self.AUTOROUTE and os.path.exists(self.AUTOROUTE):
+            if mifns and self.AUTOROUTE and os.path.exists(self.AUTOROUTE) and not self.USE_PYTHON:
                 LOG.info(f"Running AutoRoute on {len(mifns)} DEM(s)...")
                 list(tqdm.tqdm(pool.imap_unordered(self.run_autoroute, mifns), total=len(mifns), 
                               desc="Running AutoRoute", disable=self.DISABLE_PBAR))
@@ -175,7 +175,7 @@ class AutoRoute:
                 list(tqdm.tqdm(pool.imap_unordered(self.run_arc, mifns), total=len(mifns), 
                               desc="Running ARC", disable=self.DISABLE_PBAR))
 
-            if mifns and self.FLOODSPREADER and os.path.exists(self.FLOODSPREADER):
+            if mifns and self.FLOODSPREADER and os.path.exists(self.FLOODSPREADER) and not self.USE_PYTHON:
                 if not self.FLOOD_FLOWFILE:
                     LOG.warning("FloodSpreader requires a flood flow file. Will not run...")
                 else:
@@ -635,11 +635,12 @@ class AutoRoute:
         if matches == 0:
             LOG.warning(f"{matches} id(s) out of {df.shape[0]} from your input file are present in the stream raster...")
         
+        sep = "," if self.USE_PYTHON else "\t"
         (
             pd.DataFrame({'ROW': indices[0], 'COL': indices[1], self.SIMULATION_ID_COLUMN: values})
             .merge(df, on=self.SIMULATION_ID_COLUMN, how='left')
             .fillna(0)
-            .to_csv(row_col_file, sep="\t", index=False)
+            .to_csv(row_col_file, sep=sep, index=False)
         )
         self.update_hash(row_col_file, self.SIMULATION_FLOWFILE, strm)
         return row_col_file
