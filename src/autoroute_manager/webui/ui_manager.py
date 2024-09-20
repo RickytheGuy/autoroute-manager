@@ -190,8 +190,7 @@ class ManagerFacade():
                     "Gen_Dir_Dist":args[17],
                     "Gen_Slope_Dist":args[18],
                     "Weight_Angles":args[32],
-                    "Str_Limit_Val":args[27],
-                    "UP_Str_Limit_Val":args[28],
+
                     "degree_manip":args[25],
                     "degree_interval":args[26],
                     "Low_Spot_Range":args[19],
@@ -202,8 +201,7 @@ class ManagerFacade():
                     "flow_baseflow":args[10],
                     "subtract_baseflow":args[7],
                     "Bathymetry_Alpha":args[35],
-                    "Layer_Row_Start":args[29],
-                    "Layer_Row_End":args[30],
+
                     "ADJUST_FLOW_BY_FRACTION":args[34],
                     "BATHY_Out_File":args[36],
                     "Meta_File":args[12],
@@ -293,8 +291,8 @@ class ManagerFacade():
         else:
             return gr.Radio(info=self.docs['FloodSpreader_SpecifyDepth']), gr.Column(visible=False), gr.Number(visible=True)
 
-    def bathy_changes(self,value: str) -> Tuple[gr.Slider, gr.Slider]:
-        if value == 'Trapezoidal':
+    def bathy_changes(self,value: str, use_python:bool) -> Tuple[gr.Slider, gr.Slider]:
+        if value == 'Trapezoidal' or use_python:
             return gr.Slider(visible=True), gr.Slider(visible=False)
         if value in ['Left Bank Quadratic', 'Right Bank Quadratic', 'Double Quadratic']:
             return gr.Slider(visible=True), gr.Slider(visible=True)
@@ -392,10 +390,7 @@ class ManagerFacade():
                   "weight_angles": weight_angles,
                   "use_prev_d_4_xs": use_prev_d_4_xs,
                   "adjust_flow": adjust_flow,
-                  "Str_Limit_Val": Str_Limit_Val,
-                  "UP_Str_Limit_Val": UP_Str_Limit_Val,
-                  "row_start": row_start,
-                  "row_end": row_end,
+
                   "degree_manip": degree_manip,
                   "degree_interval": degree_interval,
                   "man_n": man_n,

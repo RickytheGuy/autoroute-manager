@@ -157,7 +157,7 @@ class AutoRoute:
                                             total=n_strms,desc='Creating flow files', disable=self.DISABLE_PBAR))
             
             pairs = self._zip_files(dems, strms, lus, sim_flow_files, flood_files)
-            if self.AUTOROUTE or self.FLOODSPREADER:
+            if self.AUTOROUTE or self.FLOODSPREADER or self.USE_PYTHON:
                 LOG.info(f"Creating mifn files for {len(pairs)} DEM(s)...")
                 mifns = pool.starmap(self.create_mifn_file, pairs)
                 mifns = [mifn for mifn in mifns if mifn]
@@ -170,6 +170,10 @@ class AutoRoute:
                 LOG.info(f"Running AutoRoute on {len(mifns)} DEM(s)...")
                 list(tqdm.tqdm(pool.imap_unordered(self.run_autoroute, mifns), total=len(mifns), 
                               desc="Running AutoRoute", disable=self.DISABLE_PBAR))
+            elif mifns and self.USE_PYTHON:
+                LOG.info(f"Running ARC on {len(mifns)} DEM(s)...")
+                list(tqdm.tqdm(pool.imap_unordered(self.run_arc, mifns), total=len(mifns), 
+                              desc="Running ARC", disable=self.DISABLE_PBAR))
 
             if mifns and self.FLOODSPREADER and os.path.exists(self.FLOODSPREADER):
                 if not self.FLOOD_FLOWFILE:
@@ -180,7 +184,7 @@ class AutoRoute:
                                   desc='Running FloodSpreader', disable=self.DISABLE_PBAR))
                     LOG.info('FloodSpreader finished')
 
-            if self.CLEAN_OUTPUTS:
+            if mifns and self.CLEAN_OUTPUTS:
                 LOG.info(f"Cleaning outputs for {len(mifns)} DEM(s)...")
                 list(tqdm.tqdm(pool.imap_unordered(self.optimize_outputs, mifns), total=len(mifns), 
                               desc="Optimizing outputs", disable=self.DISABLE_PBAR))
@@ -255,7 +259,7 @@ class AutoRoute:
         self.STREAM_NETWORK_FOLDER = ""
         self.LAND_USE_FOLDER = "" 
         self.SIMULATION_FLOWFILE = ""
-        self.FLOOD_FLOWFILE: Callable = None
+        self.FLOOD_FLOWFILE: str = ''
         self.SIMULATION_ID_COLUMN = ""
         self.SIMULATION_FLOW_COLUMN = ""
         self.EXTENT = None
@@ -268,7 +272,6 @@ class AutoRoute:
         self.multiprocess_data = multiprocessing.Manager().dict()
         self.DISABLE_PBAR = False
 
-        self.AUTOROUTE_PYTHON_MAIN: Callable = None # Hidden
         self.USE_PYTHON = False
         self.AUTOROUTE = ""
         self.FLOODSPREADER = ""
@@ -286,10 +289,6 @@ class AutoRoute:
         self.weight_angles = 0
         self.use_prev_d_4_xs = 1
         self.adjust_flow = 1
-        self.Str_Limit_Val = 0
-        self.UP_Str_Limit_Val = float('inf')
-        self.row_start = 0
-        self.row_end = float('inf')
         self.degree_manip = 0.0
         self.degree_interval = 0.0
         self.man_n = 0.01
@@ -566,6 +565,8 @@ class AutoRoute:
     def create_row_col_id_file(self, strm: str) -> str:
         if not strm:
             return
+        if self.USE_PYTHON and self.SIMULATION_FLOWFILE.endswith(('.csv', '.txt')):
+            return self.SIMULATION_FLOWFILE
         row_col_file = os.path.join(self.DATA_DIR, 'rapid_files', f"{os.path.basename(strm).split('strm.')[0]}row_col_id.txt")
         if not self.OVERWRITE and os.path.exists(row_col_file) and self.hash_match(row_col_file, self.SIMULATION_FLOWFILE, strm):
             return row_col_file
@@ -646,6 +647,9 @@ class AutoRoute:
     def create_flood_flowfile(self, strm: str) -> str:
         if not strm:
             return
+        if self.USE_PYTHON and self.FLOOD_FLOWFILE.endswith(('.csv', '.txt')):
+            return self.SIMULATION_FLOWFILE
+
         flowfile = os.path.join(self.DATA_DIR, 'flow_files', f"{os.path.basename(strm).split('strm.')[0]}flow.txt")
         if not self.OVERWRITE and os.path.exists(flowfile) and self.hash_match(flowfile, self.FLOOD_FLOWFILE, strm):
             return flowfile
@@ -838,7 +842,7 @@ class AutoRoute:
         if strm:
             strm = self._format_path(strm)
             self._warn_DNE('Stream File', strm)
-            self._check_type('Stream Fil', strm, ['.tif', '.vrt'])
+            self._check_type('Stream File', strm, ['.tif', '.vrt'])
             self._write(output,'Stream_File',strm)
 
         # Open DEM to see if projected or geographic units
@@ -870,8 +874,8 @@ class AutoRoute:
                 self._write(output,'Flow_File',rapid_flow_file)
             else:
                 self._write(output,'Flow_RAPIDFile',rapid_flow_file)
+                self._write(output,'RowCol_From_RAPIDFile')
 
-            self._write(output,'RowCol_From_RAPIDFile')
             if not self.SIMULATION_ID_COLUMN:
                 LOG.warning('Flow ID is not specified!!')
             else:
@@ -921,23 +925,20 @@ class AutoRoute:
         meta_file = self._format_path(meta_file)
         self._write(output,'Meta_File',meta_file)
 
-        if self.convert_cfs_to_cms: self._write(output,'CONVERT_Q_CFS_TO_CMS')
+        if not self.USE_PYTHON:
+            if self.convert_cfs_to_cms: self._write(output,'CONVERT_Q_CFS_TO_CMS')
+            self._write(output,'Q_Limit',self.q_limit)
+            if self.weight_angles:
+                self._write(output,'Weight_Angles',self.weight_angles)
+            if self.use_prev_d_4_xs == 0:
+                self._write(output,'Use_Prev_D_4_XS',0)
+            elif self.use_prev_d_4_xs != 1:
+                LOG.warning('Use_Prev_D_4_XS must be 0 or 1. Will use AutoRoute\'s default value of 1')
+            self._write(output,'ADJUST_FLOW_BY_FRACTION',self.adjust_flow)
 
         self._write(output,'X_Section_Dist',self.x_distance)
-        self._write(output,'Q_Limit',self.q_limit)
         self._write(output,'Gen_Dir_Dist',self.direction_distance)
         self._write(output,'Gen_Slope_Dist',self.slope_distance)
-        if self.weight_angles:
-            self._write(output,'Weight_Angles',self.weight_angles)
-        if self.use_prev_d_4_xs == 0:
-            self._write(output,'Use_Prev_D_4_XS',0)
-        elif self.use_prev_d_4_xs != 1:
-            LOG.warning('Use_Prev_D_4_XS must be 0 or 1. Will use AutoRoute\'s default value of 1')
-        self._write(output,'ADJUST_FLOW_BY_FRACTION',self.adjust_flow)
-        if self.Str_Limit_Val: self._write(output,'Str_Limit_Val',self.Str_Limit_Val)
-        if not math.isinf(self.UP_Str_Limit_Val) and self.UP_Str_Limit_Val > 0: self._write(output,'UP_Str_Limit_Val',self.UP_Str_Limit_Val)
-        if self.row_start: self._write(output,'Layer_Row_Start',self.row_start)
-        if self.row_end < nrows and self.row_end > 0: self._write(output,'Layer_Row_End',self.row_end)
 
         if self.degree_manip > 0 and self.degree_interval > 0:
             self._write(output,'Degree_Manip',self.degree_manip)
@@ -955,24 +956,24 @@ class AutoRoute:
                     self.MANNINGS_TABLE = os.path.abspath(self.MANNINGS_TABLE)
                 mannings_table = self._format_path(self.MANNINGS_TABLE)
                 self._write(output,'LU_Manning_n',mannings_table)
-        else:
+        elif not self.USE_PYTHON:
             self._write(output,'Man_n',self.man_n)
 
         if self.low_spot_distance is not None:
-            if self.low_spot_is_meters:
+            if self.low_spot_is_meters and not self.USE_PYTHON:
                 self._write(output,'Low_Spot_Dist_m',self.low_spot_distance)
             else:
                 self._write(output,'Low_Spot_Range',self.low_spot_distance)
-            if self.low_spot_use_box:
+            if self.low_spot_use_box and not self.USE_PYTHON:
                 self._write(output,'Low_Spot_Range_Box')
                 self._write(output,'Low_Spot_Range_Box_Size',self.box_size)
         
-        if self.find_flat:
+        if self.find_flat and not self.USE_PYTHON:
             self._write(output,'Low_Spot_Find_Flat')
             if self.low_spot_find_flat_cutoff < float('inf'):
                 self._write(output,'Low_Spot_Range_FlowCutoff',self.low_spot_find_flat_cutoff)
 
-        if self.run_bathymetry:
+        if self.run_bathymetry or self.USE_PYTHON:
             self._write(output,'Bathymetry')
             if self.ar_bathy_file:
                 if not os.path.isabs(self.ar_bathy_file):
@@ -982,47 +983,37 @@ class AutoRoute:
             else:
                 bathy_file = os.path.join(self.DATA_DIR, 'bathymetry', f"{os.path.basename(dem).split('.')[0]}__ar_bathy.tif")
             self._write(output,'BATHY_Out_File',bathy_file)
-            self._write(output,'Bathymetry_Alpha',self.bathy_alpha)
-            
+            if not self.USE_PYTHON:
+                self._write(output,'Bathymetry_Alpha',self.bathy_alpha)
+                if self.bathy_method == 'Parabolic':
+                    self._write(output,'Bathymetry_Method',0)
+                elif self.bathy_method == 'Left Bank Quadratic':
+                    self._write(output,'Bathymetry_Method', 1)
+                    self._write(output,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
+                    self._write(output,'Bathymetry_YShallow',self.bathy_y_shallow)
+                elif self.bathy_method == 'Right Bank Quadratic':
+                    self._write(output,'Bathymetry_Method', 2)
+                    self._write(output,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
+                    self._write(output,'Bathymetry_YShallow',self.bathy_y_shallow)
+                elif self.bathy_method == 'Double Quadratic':
+                    self._write(output,'Bathymetry_Method', 3)
+                    self._write(output,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
+                    self._write(output,'Bathymetry_YShallow',self.bathy_y_shallow)
+                elif self.bathy_method == 'Trapezoidal':
+                    self._write(output,'Bathymetry_Method', 4)
+                    self._write(output,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
+                else: self._write(output,'Bathymetry_Method', 5)
+            else:
+                self._write(output, 'Bathy_Trap_H', self.bathy_x_max_depth)
 
-            if self.bathy_method == 'Parabolic':
-                self._write(output,'Bathymetry_Method',0)
-            elif self.bathy_method == 'Left Bank Quadratic':
-                self._write(output,'Bathymetry_Method', 1)
-                if self.USE_PYTHON:
-                    self._write(output, 'Bathy_Trap_H', self.bathy_x_max_depth)
-                else:
-                    self._write(output,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
-                self._write(output,'Bathymetry_YShallow',self.bathy_y_shallow)
-            elif self.bathy_method == 'Right Bank Quadratic':
-                self._write(output,'Bathymetry_Method', 2)
-                if self.USE_PYTHON:
-                    self._write(output, 'Bathy_Trap_H', self.bathy_x_max_depth)
-                else:
-                    self._write(output,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
-                self._write(output,'Bathymetry_YShallow',self.bathy_y_shallow)
-            elif self.bathy_method == 'Double Quadratic':
-                self._write(output,'Bathymetry_Method', 3)
-                if self.USE_PYTHON:
-                    self._write(output, 'Bathy_Trap_H', self.bathy_x_max_depth)
-                else:
-                    self._write(output,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
-                self._write(output,'Bathymetry_YShallow',self.bathy_y_shallow)
-            elif self.bathy_method == 'Trapezoidal':
-                self._write(output,'Bathymetry_Method', 4)
-                if self.USE_PYTHON:
-                    self._write(output, 'Bathy_Trap_H', self.bathy_x_max_depth)
-                else:
-                    self._write(output,'Bathymetry_XMaxDepth',self.bathy_x_max_depth)
-            else: self._write(output,'Bathymetry_Method', 5)
 
-        if self.da_flow_param: self._write(output, 'RAPID_DA_or_Flow_Param',self.da_flow_param)
+        if self.da_flow_param and not self.USE_PYTHON: self._write(output, 'RAPID_DA_or_Flow_Param',self.da_flow_param)
 
         output.append('\n')
         self._write(output,'# FloodSpreader Inputs')
         output.append('\n')
 
-        if self.FLOODSPREADER and os.path.exists(self.FLOODSPREADER):
+        if self.FLOODSPREADER and os.path.exists(self.FLOODSPREADER) and not self.USE_PYTHON:
             if flowfile:
                 id_flow_file = self._format_path(flowfile)
                 self._warn_DNE('ID Flow File', id_flow_file)
@@ -1162,16 +1153,16 @@ class AutoRoute:
 
         return output
 
+    def run_arc(self, mifn: str) -> None:
+        try:
+            self.arc(mifn).run()
+        except TypeError as e:
+            LOG.warning("ARC is not installed. Skipping...")
+        else:
+            msg = f'Error running AutoRoutePy'
+            LOG.error(msg)
+
     def run_autoroute(self, mifn: str) -> None:
-        if self.USE_PYTHON:
-            try:
-                self.AUTOROUTE_PYTHON_MAIN(mifn)
-            except Exception as e:
-                msg = f'Error running AutoRoutePy'
-                LOG.error(msg)
-                raise e
-            return
-        
         exe = self._format_path(self.AUTOROUTE.strip())
         if not os.path.exists(exe):
             LOG.error(f"AutoRoute executable not found: {exe}")
@@ -1259,7 +1250,7 @@ class AutoRoute:
             return ""
 
     def test_ok(self):
-        if (self.AUTOROUTE or self.FLOODSPREADER) and not self.USE_PYTHON:
+        if (self.AUTOROUTE or self.FLOODSPREADER) and not self.USE_PYTHON and os.name == 'nt':
             process = subprocess.run(f'conda activate {self.AUTOROUTE_CONDA_ENV}',
                                         stdout=asyncio.subprocess.PIPE,
                                         stderr=asyncio.subprocess.PIPE,

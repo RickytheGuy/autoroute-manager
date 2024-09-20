@@ -77,7 +77,7 @@ def launch_interface():
                         id_flow_file = gr.Textbox(value=manager.default("Comid_Flow_File"),
                                         placeholder='/User/Desktop/100_year_flow.txt',
                                         label="ID Flow File",
-                                        #info=manager.default('Comid_Flow_File')
+                                        info="First column is assumed to contain IDs"
                             )
 
                         with gr.Row():
@@ -128,17 +128,16 @@ def launch_interface():
                                                     label='Overwrite',
                                                 interactive=True,
                                                 info="Force overwrite of existing files. Will take the longest time.")
-                            with gr.Column():
-                                buffer = gr.Checkbox(value=manager.default("buffer"),
-                                                        visible=True,
-                                                    label='Buffer',
-                                                    info='Buffer the DEMs for AutoRoute?',
-                                                    interactive=True)
-                                buffer_distance = gr.Number(value=manager.default("buffer_distance"),
-                                                            label='Buffer Distance',
-                                                            visible=manager.default("buffer"),
-                                                            interactive=True)
-                                buffer.change(lambda x: gr.Number(visible=x), inputs=buffer, outputs=buffer_distance)
+                            buffer = gr.Checkbox(value=manager.default("buffer"),
+                                                    visible=True,
+                                                label='Buffer',
+                                                info='Buffer the DEMs for AutoRoute?',
+                                                interactive=True)
+                            buffer_distance = gr.Number(value=manager.default("buffer_distance"),
+                                                        label='Buffer Distance',
+                                                        visible=manager.default("buffer"),
+                                                        interactive=True)
+                            buffer.change(lambda x: gr.Number(visible=x), inputs=buffer, outputs=buffer_distance)
                         
                     with gr.Column(scale=2):
                         map_output = gr.Plot(label="Extent Preview")
@@ -172,17 +171,18 @@ def launch_interface():
                                                     placeholder='/User/Desktop/AutoRoute.exe',
                                                     label="AutoRoute Executable",
                                                     info=manager.doc('ar_exe'),
-                                                    visible=True
+                                                    visible=not bool(manager.default("use_ar_python"))
                                 )
-                                use_ar_python.change(lambda x: gr.Textbox(visible=not x), inputs=use_ar_python, outputs=ar_exe)
-                                use_ar_python.change(lambda x: gr.Textbox(visible=not x), inputs=use_ar_python, outputs=curve_file)
+                                use_ar_python.change(lambda x: gr.Textbox(visible=x), inputs=use_ar_python, outputs=curve_file)
                                 
-
                                 fs_exe = gr.Textbox(value=manager.default("fs_exe"),
                                                     placeholder='/User/Desktop/FloodSpreader.exe',
                                                     label="FloodSpreader Executable",
-                                                    info=manager.doc('fs_exe')
+                                                    info=manager.doc('fs_exe'),
+                                                    visible=not bool(manager.default("use_ar_python"))
                                 )
+                                use_ar_python.change(lambda x: (gr.Textbox(visible=not x), gr.Textbox(visible=not x)), inputs=use_ar_python, outputs=[ar_exe, fs_exe])
+
                                 ids_folder = gr.Textbox(value='',
                                                         placeholder='/User/Desktop/ids.txt',
                                                         label='IDs Folder (optional)',
@@ -239,13 +239,17 @@ def launch_interface():
                             adjust_flow = gr.Number(value=manager.default("ADJUST_FLOW_BY_FRACTION"),
                                             label='Adjust Flow',
                                             info=manager.doc('ADJUST_FLOW_BY_FRACTION'),
-                                            interactive=True)
+                                            interactive=True,
+                                            visible=not bool(manager.default("use_ar_python")))
+                            use_ar_python.change(lambda x: gr.Number(visible=not x), inputs=use_ar_python, outputs=adjust_flow)
                         
                             num_iterations = gr.Number(value=manager.default("num_iterations"),
                                                 minimum=1,
                                                 label='VDT Database Iterations',
                                                 info=manager.doc('num_iterations'),
-                                                interactive=True,)
+                                                interactive=True,
+                                                visible=not bool(manager.default("use_ar_python")))
+                            use_ar_python.change(lambda x: gr.Number(visible=not x), inputs=use_ar_python, outputs=num_iterations)
                 
                             meta_file = gr.Textbox(value=manager.default("Meta_File"),
                                             placeholder='/User/Desktop/meta.txt',
@@ -256,8 +260,10 @@ def launch_interface():
                             with gr.Row():
                                 convert_cfs_to_cms = gr.Checkbox(value=manager.default("convert_cfs_to_cms"),
                                                                 label='CFS to CMS (THIS ONLY WORKS WITHOUT BASE MAX FILE)',
-                                                                info='Convert flow values from cubic feet per second to cubic meters per second'
+                                                                info='Convert flow values from cubic feet per second to cubic meters per second',
+                                                                visible=not bool(manager.default("use_ar_python"))
                                 )
+                                use_ar_python.change(lambda x: gr.Checkbox(visible=not x), inputs=use_ar_python, outputs=convert_cfs_to_cms)
 
                             with gr.Row():
                                 x_distance = gr.Slider(0,
@@ -273,7 +279,9 @@ def launch_interface():
                                                     value=manager.default("q_limit"),
                                                     label='Flow Limit',
                                                     info=manager.doc('q_limit'),
-                                                    interactive=True)
+                                                    interactive=True,
+                                                    visible=not bool(manager.default("use_ar_python")))
+                                use_ar_python.change(lambda x: gr.Slider(visible=not x), inputs=use_ar_python, outputs=q_limit)
                             
 
                             with gr.Row():
@@ -298,7 +306,8 @@ def launch_interface():
                                                     label='Low Spot Distance',
                                                     info=manager.doc('Low_Spot_Range'),
                                                     interactive=True)
-                                with gr.Column():
+                                
+                                with gr.Column(visible=not bool(manager.default("use_ar_python"))) as low_spot_col:
                                     low_spot_is_meters = gr.Checkbox(value=manager.default("low_spot_is_meters"),
                                                                     label='Is Meters?')
                                     low_spot_use_box = gr.Checkbox(value=manager.default("low_spot_use_box"),
@@ -318,6 +327,7 @@ def launch_interface():
                                                                         interactive=True
                                                                         )
                                     find_flat.change(lambda x: gr.Number(visible=x), inputs=find_flat, outputs=low_spot_find_flat_cutoff)
+                                use_ar_python.change(lambda x: gr.Column(visible=not x), inputs=use_ar_python, outputs=low_spot_col)
 
                             with gr.Accordion('Sample Additional Cross-Sections', open=False):
                                 gr.Markdown(manager.doc('degree'))
@@ -325,26 +335,7 @@ def launch_interface():
                                     degree_manip = gr.Number(value=manager.default("degree_manip"), label='Farthest Angle Out (Degree_Manip)')
                                     degree_interval = gr.Number(value=manager.default("degree_interval"), label='Angle Between Cross-Sections (Degree_Interval)')
                                     
-                            with gr.Accordion('Set Bounds on Stream Raster', open=False):
-                                gr.Markdown(manager.doc('limit_vals'))
-                                with gr.Row():
-                                    Str_Limit_Val = gr.Number(value=manager.default("Str_Limit_Val"), label='Lowest Perissible Value')
-                                    UP_Str_Limit_Val = gr.Number(value=manager.default("UP_Str_Limit_Val"), label='Highest Perissible Value')
-                            
-                            with gr.Row():
-                                # DEPRECATED
-                                row_start=gr.Number(value=manager.default("Layer_Row_Start"),
-                                                    precision=0,
-                                                    label='Starting Row',
-                                                    info=manager.doc('Layer_Row_Start'),
-                                                    visible=False)
-                                row_end=gr.Number(value=manager.default("Layer_Row_End"),
-                                                precision=0,
-                                                    label='End Row',
-                                                    info=manager.doc('Layer_Row_End'),
-                                                    visible=False)
-                                    
-                            with gr.Row():     
+                            with gr.Row(visible=not bool(manager.default("use_ar_python"))) as man_n_weight_prev_depths_col:     
                                 use_prev_d_4_xs = gr.Dropdown(
                                     [0,1],
                                     value=manager.default("use_prev_d_4_xs"),
@@ -364,22 +355,21 @@ def launch_interface():
                                                 info=manager.doc('man_n'),
                                                 interactive=True,
                                                 )
+                            use_ar_python.change(lambda x: gr.Row(visible=not x), inputs=use_ar_python, outputs=man_n_weight_prev_depths_col)
                                 
                             lu_file.change(manager.show_mans_n, [lu_file,LU_Manning_n], man_n)
 
                             with gr.Accordion('Bathymetry'):
-                                run_ar_bathy = gr.Checkbox(value=manager.default("run_ar_bathy"),
-                                                            interactive=True,
+                                run_ar_bathy = gr.Checkbox(value=manager.default("run_ar_bathy") or manager.default("use_ar_python"),
+                                                            interactive=False if bool(manager.default("use_ar_python")) else True,
                                                             label='Run AutoRoute Bathymetry?',
                                                                    )
                                         
-                                bathy_row = gr.Row(visible=False)
-                                with bathy_row:
+                                with gr.Row(visible=manager.default("run_ar_bathy") or manager.default("use_ar_python")) as bathy_row:
                                     with gr.Column():
-                                        
                                         ar_bathy_out_file = gr.Textbox(value=manager.default("BATHY_Out_File"),
                                                     placeholder='/User/Desktop/bathy/',
-                                                    label="Output Bathymetry File",
+                                                    label="Output Bathymetry Folder",
                                                     #info=manager.doc('BATHY_Out_File')
                                                     info="Output folder for AutoRoute bathymetry. Does not need to be specified for bathymetry to run"
                                         )
@@ -387,16 +377,21 @@ def launch_interface():
                                                                 label='Bathymetry Alpha',
                                                                 info=manager.doc('Bathymetry_Alpha'),
                                                                 interactive=True,
+                                                                visible=not bool(manager.default("use_ar_python"))
                                                                 )
+                                        use_ar_python.change(lambda x: gr.Number(visible=not x), inputs=use_ar_python, outputs=bathy_alpha)
                                         da_flow_param = gr.Dropdown(value=manager.default("RAPID_DA_or_Flow_Param"),
                                                                     label='Drainage or Flow Parameter',
                                                                 info=manager.doc('RAPID_DA_or_Flow_Param'),
                                                                 allow_custom_value=True,
-                                                                multiselect=False,interactive=True)
+                                                                multiselect=False,
+                                                                interactive=True,
+                                                                visible=not bool(manager.default("use_ar_python")))
+                                        use_ar_python.change(lambda x: gr.Dropdown(visible=not x), inputs=use_ar_python, outputs=da_flow_param)
 
                                     with gr.Column():
-                                        bathy_method = gr.Dropdown(['Parabolic', 'Left Bank Quadratic', 'Right Bank Quadratic', 'Double Quadratic', 'Trapezoidal','Triangle'],
-                                                                value=manager.default("bathy_method"),
+                                        bathy_method = gr.Dropdown(['Trapezoidal'] if bool(manager.default("use_ar_python")) else ['Parabolic', 'Left Bank Quadratic', 'Right Bank Quadratic', 'Double Quadratic', 'Trapezoidal','Triangle'],
+                                                                value='Trapezoidal' if bool(manager.default("use_ar_python")) else manager.default("bathy_method"),
                                                                 label='Bathymetry Method',
                                                                 info=manager.doc('bathy_method'),
                                                                 multiselect=False,
@@ -405,18 +400,19 @@ def launch_interface():
                                         bathy_x_max_depth = gr.Slider(0,1,value=manager.default("bathy_x_max_depth"),
                                                                     label='X Max Depth',
                                                                     info=manager.doc('bathy_x_max_depth'), 
-                                                                    visible=False)
+                                                                    visible=manager.default("use_ar_python"))
                                         bathy_y_shallow = gr.Slider(0,1,value=manager.default("bathy_y_shallow"),
                                                                     label='Y Shallow',
                                                                     info=manager.doc('bathy_y_shallow'), 
                                                                     visible=False)
                                         
-                                        bathy_method.change(manager.bathy_changes, bathy_method, [bathy_x_max_depth, bathy_y_shallow])
+                                        bathy_method.change(manager.bathy_changes, [bathy_method, use_ar_python], [bathy_x_max_depth, bathy_y_shallow])
                                 
-                                run_ar_bathy.change(lambda x: gr.Row(visible=x), inputs=run_ar_bathy, outputs=bathy_row)
+                                run_ar_bathy.change(lambda x: gr.Column(visible=x), inputs=run_ar_bathy, outputs=bathy_row)
+                                use_ar_python.change(lambda x, y: (gr.Row(visible=x or y), gr.Checkbox(interactive=not y, value=x or y)), inputs=[run_ar_bathy, use_ar_python], outputs=[bathy_row, run_ar_bathy])
                                 base_max_file.change(manager.update_flow_params, base_max_file, [streamlines_id_col,max_flow_column, baseflow_col, da_flow_param])
 
-                    with gr.Column():
+                    with gr.Column(visible=not manager.default("use_ar_python")) as flood_spreader_col:
                         with gr.Accordion("FloodSpreader Parameters"):
                             with gr.Column():
                                 omit_outliers = gr.Radio(['None','Flood Bad Cells', 'Use AutoRoute Depths', 'Smooth Water Surface Elevation','Use AutoRoute Depths (StDev)','Specify Depth'],
@@ -490,9 +486,11 @@ def launch_interface():
                                         fs_bathy_smooth_method.change(lambda x: gr.Number(visible=True) if x[0] == 'I' else gr.Number(visible=False),
                                                                     fs_bathy_smooth_method, bathy_twd_factor)
                 
+                    use_ar_python.change(lambda x: gr.Column(visible=not x), inputs=use_ar_python, outputs=flood_spreader_col)
+                # TODO clean up inputs and the functions that take them
                 inputs = [dem, curve_file, strm_lines,  gr.Text(visible=False), lu_file,  gr.Text(visible=False), base_max_file, subtract_baseflow, streamlines_id_col, max_flow_column, baseflow_col, num_iterations,
                                                         meta_file, convert_cfs_to_cms, x_distance, q_limit, LU_Manning_n, direction_distance, slope_distance, low_spot_distance, low_spot_is_meters,
-                                                        low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, degree_manip, degree_interval, Str_Limit_Val, UP_Str_Limit_Val, row_start, row_end, use_prev_d_4_xs,
+                                                        low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, degree_manip, degree_interval, gr.Text(visible=False), gr.Text(visible=False), gr.Text(visible=False), gr.Text(visible=False), use_prev_d_4_xs,
                                                         weight_angles, man_n, adjust_flow, bathy_alpha, ar_bathy_out_file, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
                                                         specify_depth, twd_factor, only_streams, use_ar_top_widths, flood_local, depth_map, flood_map, velocity_map, wse_map, fs_bathy_file, da_flow_param,
                                                         bathy_method,bathy_x_max_depth, bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,
@@ -555,11 +553,6 @@ def launch_interface():
                         
                         get_median_button = gr.Button("Get Max Median Forecast Data")
                         get_median_button.click(fn=manager.get_median_max_forecast, inputs=[id_list_medians, output_median_file, date_median], outputs=[])
-                        
-
-
-
-
 
     demo.queue().launch(
                 server_name="0.0.0.0",
@@ -568,7 +561,6 @@ def launch_interface():
                 debug=True,
                 show_error=True
             )
-    
 
 def main():
     launch_interface()
