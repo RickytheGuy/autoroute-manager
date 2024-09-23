@@ -47,13 +47,6 @@ class ManagerFacade():
         self.docs = docs
         self.data = data
         
-        extensions = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'extensions')
-        # self.pull_autoroute_py(extensions)
-        # from extensions.autoroutepy import Automated_Rating_Curve_Generator
-        # self.autoroutepy = Automated_Rating_Curve_Generator.main
-        self.autoroutepy = None
-
-        
     async def run(self, **kwargs):
         await self._run(**kwargs)
 
@@ -383,7 +376,6 @@ class ManagerFacade():
                   "WSE_MAP": self._format_files(wse_map),
                   "CLEAN_OUTPUTS": clean_outputs,
                   
-                  "AUTOROUTE_PYTHON_MAIN": self.autoroutepy,
                   "USE_PYTHON": use_ar_python,
                   "AUTOROUTE": self._format_files(ar_exe),
                   "FLOODSPREADER": self._format_files(fs_exe),

@@ -192,27 +192,29 @@ def launch_interface():
                                 depth_map = gr.Textbox(value=manager.default("out_depth"),
                                     placeholder='/User/Desktop/Depth/',
                                     label="Output Depth Map Folder",
-                                    #info=manager.doc('out_depth')
+                                    visible=not bool(manager.default("use_ar_python"))
                                 )
                                 flood_map = gr.Textbox(value=manager.default("out_flood"),
                                     placeholder='/User/Desktop/flood/',
                                     label="Output Flood Map Folder",
-                                    #info=manager.doc('out_flood')
+                                    visible=not bool(manager.default("use_ar_python"))
                                 )
                                 velocity_map = gr.Textbox(value=manager.default("out_velocity"),
                                     placeholder='/User/Desktop/velocity',
                                     label="Output Velocity Map Folder",
-                                    #info=manager.doc('out_velocity')
+                                    visible=not bool(manager.default("use_ar_python"))
                                 )
                                 wse_map = gr.Textbox(value=manager.default("out_wse"),
                                     placeholder='/User/Desktop/wse',
                                     label="Output WSE Map Folder",
-                                    #info=manager.doc('out_wse')
+                                    visible=not bool(manager.default("use_ar_python"))
                                 )
 
                                 run_button = gr.Button("Run Model", variant='primary')
                                 save_button = gr.Button("Save Parameters")
-                                get_ids_button = gr.Button("Get IDs from Inputs Given", variant='secondary')
+                                get_ids_button = gr.Button("Get IDs from Inputs Given")
+
+                            use_ar_python.change(lambda x: [gr.Column(visible=not x) for _ in range(4)], inputs=use_ar_python, outputs=[depth_map, flood_map, velocity_map, wse_map])
                                 
                             # with gr.Column():
                             #     gr.Markdown('Below are the options to select a river and its downstream neighbors to use. '

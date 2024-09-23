@@ -1049,26 +1049,6 @@ class AutoRoute:
             if self.use_ar_top_widths: self._write(output,'FloodSpreader_Use_AR_TopWidth')
             if self.flood_local: self._write(output,'FloodLocalOnly')
 
-            if self.DEPTH_MAP:
-                self.DEPTH_MAP = self._format_path(self.DEPTH_MAP)
-                os.makedirs(self.DEPTH_MAP, exist_ok=True)
-                if not os.path.isabs(self.DEPTH_MAP):
-                    self.DEPTH_MAP = os.path.abspath(self.DEPTH_MAP)
-                depth_map = self._format_path(os.path.join(self.DEPTH_MAP, f"{os.path.basename(dem).split('.')[0]}__depth.tif"))
-                if self.OVERWRITE or not os.path.exists(depth_map):
-                    self._check_type('Depth Map',depth_map,['.tif'])
-                    self._write(output,'OutDEP',depth_map)
-
-            if self.FLOOD_MAP:
-                self.FLOOD_MAP = self._format_path(self.FLOOD_MAP)
-                os.makedirs(self.FLOOD_MAP, exist_ok=True)
-                if not os.path.isabs(self.FLOOD_MAP):
-                    self.FLOOD_MAP = os.path.abspath(self.FLOOD_MAP)
-                flood_map = self._format_path(os.path.join(self.FLOOD_MAP, f"{os.path.basename(dem).split('.')[0]}__flood.tif"))
-                if self.OVERWRITE or not os.path.exists(flood_map):
-                    self._check_type('Flood Map',flood_map,['.tif'])
-                    self._write(output,'OutFLD',flood_map)
-
             if self.VELOCITY_MAP:
                 self.VELOCITY_MAP = self._format_path(self.VELOCITY_MAP)
                 os.makedirs(self.VELOCITY_MAP, exist_ok=True)
@@ -1099,6 +1079,33 @@ class AutoRoute:
                     self._write(output,'Bathy_LinearInterpolation')
                 elif self.fs_bathy_smooth_method == 'Inverse-Distance Weighted':
                     self._write(output,'BathyTopWidthDistanceFactor', self.bathy_twd_factor)
+    
+        if (self.FLOODSPREADER and os.path.exists(self.FLOODSPREADER)) or self.USE_PYTHON:
+            if self.DEPTH_MAP:
+                self.DEPTH_MAP = self._format_path(self.DEPTH_MAP)
+                os.makedirs(self.DEPTH_MAP, exist_ok=True)
+                if not os.path.isabs(self.DEPTH_MAP):
+                    self.DEPTH_MAP = os.path.abspath(self.DEPTH_MAP)
+                depth_map = self._format_path(os.path.join(self.DEPTH_MAP, f"{os.path.basename(dem).split('.')[0]}__depth.tif"))
+                if self.OVERWRITE or not os.path.exists(depth_map):
+                    self._check_type('Depth Map',depth_map,['.tif'])
+                    if self.USE_PYTHON:
+                        self._write(output,'AROutDEPTH',depth_map)
+                    else:
+                        self._write(output,'OutDEP',depth_map)
+
+            if self.FLOOD_MAP:
+                self.FLOOD_MAP = self._format_path(self.FLOOD_MAP)
+                os.makedirs(self.FLOOD_MAP, exist_ok=True)
+                if not os.path.isabs(self.FLOOD_MAP):
+                    self.FLOOD_MAP = os.path.abspath(self.FLOOD_MAP)
+                flood_map = self._format_path(os.path.join(self.FLOOD_MAP, f"{os.path.basename(dem).split('.')[0]}__flood.tif"))
+                if self.OVERWRITE or not os.path.exists(flood_map):
+                    self._check_type('Flood Map',flood_map,['.tif'])
+                    if self.USE_PYTHON:
+                        self._write(output,'AROutFLOOD',flood_map)
+                    else:
+                        self._write(output,'AROutFLOOD',flood_map)
 
         contents = "\n".join(output)
         with open(mifn, 'w', encoding='utf-8') as f:
@@ -1160,11 +1167,11 @@ class AutoRoute:
 
     def run_arc(self, mifn: str) -> None:
         try:
-            self.arc(mifn).run()
+            self.arc(mifn, True).run()
         except TypeError as e:
             LOG.warning("ARC is not installed. Skipping...")
         else:
-            msg = f'Error running AutoRoutePy'
+            msg = f'Error running ARC'
             LOG.error(msg)
 
     def run_autoroute(self, mifn: str) -> None:
