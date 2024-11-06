@@ -1105,7 +1105,7 @@ class AutoRoute:
                     if self.USE_PYTHON:
                         self._write(output,'AROutFLOOD',flood_map)
                     else:
-                        self._write(output,'AROutFLOOD',flood_map)
+                        self._write(output,'OutFLD',flood_map)
 
         contents = "\n".join(output)
         with open(mifn, 'w', encoding='utf-8') as f:
