@@ -45,8 +45,11 @@ class AutoRoute:
         if yaml:
             self.setup(yaml)
             
-        self._hash_file = '.file_metadata.json'
+        file_dir = os.path.dirname(os.path.abspath(__file__))
+        self._hash_file = os.path.join(file_dir, '.file_metadata.json')
+        self._cache_file = os.path.join(file_dir, '.cache_data.json')
         self._file_hash_dict = multiprocessing.Manager().dict()
+        self._cache_data_dict = {}
         if os.path.exists(self._hash_file):
             with open(self._hash_file, 'r') as f:
                 try:
@@ -55,6 +58,14 @@ class AutoRoute:
                     tmp = {}
                 for key, value in tmp.items():
                     self._file_hash_dict[key] = value
+
+        if os.path.exists(self._cache_file):
+            with open(self._cache_file, 'r') as f:
+                try:
+                    tmp = json.load(f)
+                except json.JSONDecodeError:
+                    tmp = {}
+                self._cache_data_dict = dict(tmp)
 
         try:
             from arc_byu.arc import Arc
@@ -97,12 +108,13 @@ class AutoRoute:
         else:
             if self.BUFFER_FILES:
                 dems = {f for f in glob.glob(os.path.join(self.DATA_DIR, 'dems', "buffered", "*")) if f.lower().endswith((".tif", ".vrt"))}
-            elif self.CROP:
-                dems = {f for f in glob.glob(os.path.join(self.DATA_DIR, 'dems', "cropped", "*")) if f.lower().endswith((".tif", ".vrt"))}
+            # elif self.CROP:
+            #     dems = {f for f in glob.glob(os.path.join(self.DATA_DIR, 'dems', "cropped", "*")) if f.lower().endswith((".tif", ".vrt"))}
             else:
                 dems = glob.glob(os.path.join(self.DATA_DIR, 'dems', "*"))
         if self.EXTENT:
-            dems = {dem for dem in dems if self.is_in_extent(dem, self.EXTENT)}
+            dems = {dem for dem in dems if self.is_in_extent(dem, self.EXTENT, True)}
+            self.save_cache()
         if not dems:
             LOG.error(f"No DEMs found!!")
             return
@@ -115,9 +127,9 @@ class AutoRoute:
                 LOG.info(f"Buffering {n_dems} DEM(s)...")
                 dems = list(tqdm.tqdm(pool.imap_unordered(self.buffer_dem, dems), disable=self.DISABLE_PBAR))
 
-            elif self.CROP and self.EXTENT and self.DEM_FOLDER:
-                LOG.info(f"Cropping {n_dems} DEM(s)...")
-                dems = list(tqdm.tqdm(pool.imap_unordered(self.crop, dems), total=len(dems), disable=self.DISABLE_PBAR))
+            # elif self.CROP and self.EXTENT and self.DEM_FOLDER:
+            #     LOG.info(f"Cropping {n_dems} DEM(s)...")
+            #     dems = list(tqdm.tqdm(pool.imap_unordered(self.crop, dems), total=len(dems), disable=self.DISABLE_PBAR))
 
             if self.STREAM_NETWORK_FOLDER:
                 if self.STREAM_ID == None:
@@ -190,6 +202,10 @@ class AutoRoute:
                     list(tqdm.tqdm(pool.imap_unordered(self.run_floodspreader, mifns), total=len(mifns), 
                                   desc='Running FloodSpreader', disable=self.DISABLE_PBAR))
                     LOG.info('FloodSpreader finished')
+
+            if mifns and self.CROP:
+                LOG.info('Concatenating and cropping flood maps to extent')
+                self.crop_files(mifns)
 
             if mifns and self.CLEAN_OUTPUTS:
                 LOG.info(f"Cleaning outputs for {len(mifns)} DEM(s)...")
@@ -379,9 +395,18 @@ class AutoRoute:
             tif_files.extend(glob.glob(os.path.join(root, type)))
         return tif_files
 
-    def is_in_extent(self, ds: Any,extent: list = None) -> bool:
+    def is_in_extent(self, ds: Any, extent: list = None, check_hash: bool = False) -> bool:
         if extent is None:
             return True
+        if check_hash and isinstance(ds, str):
+            if (cached_extent := self._cache_data_dict.get(ds, False)):
+               return self._isin(*cached_extent, extent)
+            else:
+                with gdal.Open(ds) as f:
+                    minx, miny, maxx, maxy = self.get_ds_extent(f)
+                self._cache_data_dict[ds] = [minx, miny, maxx, maxy]
+                return self._isin(*self._cache_data_dict[ds], extent)
+
         if isinstance(ds, str):
             ds = self.open_w_gdal(ds)
         if not ds: return False
@@ -801,6 +826,8 @@ class AutoRoute:
             LOG.warning(f'Could not open {dem}. Skipping...')
             return
         projection = ds.GetProjection()
+        x = ds.RasterXSize
+        y = ds.RasterYSize
         no_data_value = ds.GetRasterBand(1).GetNoDataValue()
         minx, miny, maxx, maxy = self.get_ds_extent(ds)
         ds = None
@@ -816,6 +843,8 @@ class AutoRoute:
             return
 
         vrt_options = gdal.BuildVRTOptions(resampleAlg='nearest',
+                                           xRes=x,
+                                           yRes=y,
                                         outputSRS=projection,
                                         srcNodata=no_data_value,
                                         outputBounds=(minx, miny, maxx, maxy))
@@ -1105,7 +1134,7 @@ class AutoRoute:
                     if self.USE_PYTHON:
                         self._write(output,'AROutFLOOD',flood_map)
                     else:
-                        self._write(output,'AROutFLOOD',flood_map)
+                        self._write(output,'OutFLD',flood_map)
 
         contents = "\n".join(output)
         with open(mifn, 'w', encoding='utf-8') as f:
@@ -1315,6 +1344,23 @@ class AutoRoute:
         except Exception as e:
             LOG.error(f"Error cleaning outputs: {e}")
 
+    def crop_files(self, mifns: list[str]) -> None:
+        fld_maps = {self.get_item_from_mifn(mifn, key='OutFLD') for mifn in mifns} - {""}
+        dep_maps = {self.get_item_from_mifn(mifn, key='OutDEP') for mifn in mifns} - {""}
+        vel_maps = {self.get_item_from_mifn(mifn, key='OutVEL') for mifn in mifns} - {""}
+        wse_maps = {self.get_item_from_mifn(mifn, key='OutWSE') for mifn in mifns} - {""}
+        fs_bathys = {self.get_item_from_mifn(mifn, key='FSOutBATHY') for mifn in mifns} - {""}
+        ar_bathys = {self.get_item_from_mifn(mifn, key='BATHY_Out_File') for mifn in mifns} - {""}
+        for maps in [fld_maps, dep_maps, vel_maps, wse_maps, fs_bathys, ar_bathys]:
+            if len(maps) > 0:
+                self._combine_crop(maps)
+
+    def _combine_crop(self, maps: set[str]) -> None:
+        datasets = [gdal.Open(m) for m in maps]
+        warp_options = gdal.WarpOptions(format='GTiff', resampleAlg='nearest',outputBounds=self.EXTENT, dstNodata=-9999)
+        out_name = maps.pop().split('.')[0] + '_cropped.tif"'
+        gdal.Warp(out_name, datasets, options=warp_options)
+
     def create_fname(self, minx: float, miny: float, maxx: float, 
                      maxy: float,_type: str = '.vrt',append: str = '') -> str:
         return f"{self.format_coord(miny, True)}{self.format_coord(minx, False)}__{self.format_coord(maxy, True)}{self.format_coord(maxx, False)}{append}{_type}"
@@ -1414,3 +1460,7 @@ class AutoRoute:
     def save_hashes(self) -> None:
         with open(self._hash_file, 'w') as f:
             json.dump(dict(self._file_hash_dict), f, indent=4)
+
+    def save_cache(self) -> None:
+        with open(self._cache_file, 'w') as f:
+            json.dump(self._cache_data_dict, f, indent=4)
