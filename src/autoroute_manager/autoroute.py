@@ -190,6 +190,11 @@ class AutoRoute:
                     list(tqdm.tqdm(pool.imap_unordered(self.run_floodspreader, mifns), total=len(mifns), 
                                   desc='Running FloodSpreader', disable=self.DISABLE_PBAR))
                     LOG.info('FloodSpreader finished')
+            elif mifns and self.USE_PYTHON:
+                LOG.info(f"Running ARCMapper on {len(mifns)} DEM(s)...")
+                list(tqdm.tqdm(pool.imap_unordered(self.run_arc_map, mifns), total=len(mifns), 
+                              desc='Running ARCMapper', disable=self.DISABLE_PBAR))
+                LOG.info('FloodSpreader finished')
 
             if mifns and self.CLEAN_OUTPUTS:
                 LOG.info(f"Cleaning outputs for {len(mifns)} DEM(s)...")
