@@ -197,7 +197,6 @@ def launch_interface():
                                 flood_map = gr.Textbox(value=manager.default("out_flood"),
                                     placeholder='/User/Desktop/flood/',
                                     label="Output Flood Map Folder",
-                                    visible=not bool(manager.default("use_ar_python"))
                                 )
                                 velocity_map = gr.Textbox(value=manager.default("out_velocity"),
                                     placeholder='/User/Desktop/velocity',
@@ -214,7 +213,7 @@ def launch_interface():
                                 save_button = gr.Button("Save Parameters")
                                 get_ids_button = gr.Button("Get IDs from Inputs Given")
 
-                            use_ar_python.change(lambda x: [gr.Column(visible=not x) for _ in range(4)], inputs=use_ar_python, outputs=[depth_map, flood_map, velocity_map, wse_map])
+                            use_ar_python.change(lambda x: [gr.Column(visible=not x) for _ in range(3)], inputs=use_ar_python, outputs=[depth_map, velocity_map, wse_map])
                                 
                             # with gr.Column():
                             #     gr.Markdown('Below are the options to select a river and its downstream neighbors to use. '
@@ -283,7 +282,7 @@ def launch_interface():
                                                     info=manager.doc('q_limit'),
                                                     interactive=True,
                                                     visible=not bool(manager.default("use_ar_python")))
-                                use_ar_python.change(lambda x: gr.Slider(visible=not x), inputs=use_ar_python, outputs=q_limit)
+                                #use_ar_python.change(lambda x: gr.Slider(visible=not x), inputs=use_ar_python, outputs=q_limit)
                             
 
                             with gr.Row():

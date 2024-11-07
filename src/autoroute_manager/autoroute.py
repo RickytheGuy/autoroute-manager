@@ -929,10 +929,10 @@ class AutoRoute:
 
         meta_file = self._format_path(meta_file)
         self._write(output,'Meta_File',meta_file)
+        self._write(output,'Q_Limit',self.q_limit)
 
         if not self.USE_PYTHON:
             if self.convert_cfs_to_cms: self._write(output,'CONVERT_Q_CFS_TO_CMS')
-            self._write(output,'Q_Limit',self.q_limit)
             if self.weight_angles:
                 self._write(output,'Weight_Angles',self.weight_angles)
             if self.use_prev_d_4_xs == 0:
@@ -1018,13 +1018,18 @@ class AutoRoute:
         self._write(output,'# FloodSpreader Inputs')
         output.append('\n')
 
-        if self.FLOODSPREADER and os.path.exists(self.FLOODSPREADER) and not self.USE_PYTHON:
+        if (self.FLOODSPREADER and os.path.exists(self.FLOODSPREADER)) or self.USE_PYTHON:
+            if self.twd_factor != 1.5:
+                self._write(output,'TopWidthDistanceFactor',self.twd_factor)
+            if self.flood_local: self._write(output,'FloodLocalOnly')
             if flowfile:
                 id_flow_file = self._format_path(flowfile)
                 self._warn_DNE('ID Flow File', id_flow_file)
                 self._check_type('ID Flow File', id_flow_file, ['.txt','.csv'])
                 self._write(output,'Comid_Flow_File',id_flow_file)
 
+
+        if self.FLOODSPREADER and os.path.exists(self.FLOODSPREADER) and not self.USE_PYTHON:
             if self.omit_outliers:
                 if self.omit_outliers == 'Flood Bad Cells':
                     self._write(output,'Flood_BadCells')
@@ -1043,11 +1048,8 @@ class AutoRoute:
                 else:
                     LOG.warning(f'Unknown outlier omission option: {self.omit_outliers}')
 
-            if self.twd_factor != 1.5:
-                self._write(output,'TopWidthDistanceFactor',self.twd_factor)
             if self.only_streams: self._write(output,'FloodSpreader_JustStrmDepths')
             if self.use_ar_top_widths: self._write(output,'FloodSpreader_Use_AR_TopWidth')
-            if self.flood_local: self._write(output,'FloodLocalOnly')
 
             if self.VELOCITY_MAP:
                 self.VELOCITY_MAP = self._format_path(self.VELOCITY_MAP)
@@ -1089,10 +1091,7 @@ class AutoRoute:
                 depth_map = self._format_path(os.path.join(self.DEPTH_MAP, f"{os.path.basename(dem).split('.')[0]}__depth.tif"))
                 if self.OVERWRITE or not os.path.exists(depth_map):
                     self._check_type('Depth Map',depth_map,['.tif'])
-                    if self.USE_PYTHON:
-                        self._write(output,'AROutDEPTH',depth_map)
-                    else:
-                        self._write(output,'OutDEP',depth_map)
+                    self._write(output,'OutDEP',depth_map)
 
             if self.FLOOD_MAP:
                 self.FLOOD_MAP = self._format_path(self.FLOOD_MAP)
@@ -1102,10 +1101,7 @@ class AutoRoute:
                 flood_map = self._format_path(os.path.join(self.FLOOD_MAP, f"{os.path.basename(dem).split('.')[0]}__flood.tif"))
                 if self.OVERWRITE or not os.path.exists(flood_map):
                     self._check_type('Flood Map',flood_map,['.tif'])
-                    if self.USE_PYTHON:
-                        self._write(output,'AROutFLOOD',flood_map)
-                    else:
-                        self._write(output,'AROutFLOOD',flood_map)
+                    self._write(output,'OutFLD',flood_map)
 
         contents = "\n".join(output)
         with open(mifn, 'w', encoding='utf-8') as f:
@@ -1172,6 +1168,15 @@ class AutoRoute:
             LOG.warning("ARC is not installed. Skipping...")
         else:
             msg = f'Error running ARC'
+            LOG.error(msg)
+
+    def run_arc_map(self, mifn: str) -> None:
+        try:
+            self.arc(mifn, True).flood()
+        except TypeError as e:
+            LOG.warning("ARC is not installed. Skipping...")
+        else:
+            msg = f'Error running ARC flood mapper'
             LOG.error(msg)
 
     def run_autoroute(self, mifn: str) -> None:
