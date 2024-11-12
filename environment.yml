@@ -6,6 +6,7 @@ dependencies:
   - pyyaml
   - tqdm
   - gdal>=3.8
+  - plotly
   - pyproj
   - gradio
   - contextily

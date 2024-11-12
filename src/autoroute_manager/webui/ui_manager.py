@@ -11,6 +11,9 @@ import contextily as ctx
 import xarray as xr
 import gradio as gr
 import numpy as np
+import pyproj
+import plotly.express as px
+import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import pandas as pd
@@ -18,7 +21,7 @@ import geopandas as gpd
 
 from osgeo import gdal
 from shapely.geometry import box
-from shapely.geometry import LineString
+from shapely.geometry import LineString, MultiLineString
 from pyproj import Transformer
 
 from autoroute_manager.autoroute import AutoRoute
@@ -30,6 +33,9 @@ gdal.UseExceptions()
 SYSTEM = platform.system()
 
 class ManagerFacade():
+    map_df = None
+    map_extents = None
+    strm_hash = None
     def init(self) -> None:
         self.manager = AutoRoute(None)
         self.docs_file = 'defaults_and_docs.json'
@@ -144,8 +150,8 @@ class ManagerFacade():
         Save the modified documentation and defaults
 
         order of args: 
-        0. dem, curve_file, strm_lines, strm_name, lu_file, 
-        5. lu_name, base_max_file, subtract_baseflow, flow_id (streamlines_id_col), flow_params, 
+        0. dem, curve_file, strm_lines, id_flow_id_col, lu_file, 
+        5. base_max_id_col, base_max_file, subtract_baseflow, streamlines_id_col, flow_params, 
         10. flow_baseflow, num_iterations,meta_file, convert_cfs_to_cms, x_distance, 
         15. q_limit, LU_Manning_n, direction_distance, slope_distance, low_spot_distance, 
         20. low_spot_is_meters,low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, 
@@ -160,7 +166,9 @@ class ManagerFacade():
         65. crop, vdt_file,  ar_exe, fs_exe, clean_outputs
         70. buffer_distance, use_ar_python, run_ar_bathy
         """
-        if len(args) < 69: return
+        if len(args) < 69: 
+            LOG.warning('Could not save parameters')
+            return
         to_write = [
             {
                 "docs": self.docs,
@@ -168,8 +176,10 @@ class ManagerFacade():
                     "DEM":args[0],
                     "curve_file":args[1],
                     "strm_lines":args[2],
+                    "id_flow_id_col":args[3],
+                    "base_max_id_col":args[5],
 
-                    "flow_id":args[8],
+                    "streamlines_id_col":args[8],
                     "ar_exe":args[67],
                     "fs_exe":args[68],
                     "x_distance":args[14],
@@ -328,7 +338,7 @@ class ManagerFacade():
         else:
             return gr.Markdown(visible=False), gr.DataFrame(visible=False), gr.Textbox(visible=False)
 
-    async def _run(self,dem, curve_file, strm_lines, strm_name, lu_file, lu_name, base_max_file, subtract_baseflow, streamlines_id_col, flow_params_ar, flow_baseflow, num_iterations,
+    async def _run(self,dem, curve_file, strm_lines, id_flow_id_col, lu_file, base_max_id_col, base_max_file, subtract_baseflow, streamlines_id_col, flow_params_ar, flow_baseflow, num_iterations,
                                                     meta_file, convert_cfs_to_cms, x_distance, q_limit, mannings_table, direction_distance, slope_distance, low_spot_distance, low_spot_is_meters,
                                                     low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, degree_manip, degree_interval, Str_Limit_Val, UP_Str_Limit_Val, row_start, row_end, use_prev_d_4_xs,
                                                     weight_angles, man_n, adjust_flow, bathy_alpha, ar_bathy, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
@@ -363,9 +373,10 @@ class ManagerFacade():
                   "STREAM_ID": streamlines_id_col,
                   "SIMULATION_FLOWFILE": self._format_files(base_max_file),
                   "FLOOD_FLOWFILE":self._format_files(id_flow_file),
-                  "SIMULATION_ID_COLUMN": streamlines_id_col,
+                  "SIMULATION_ID_COLUMN": id_flow_id_col,
                   "SIMULATION_FLOW_COLUMN": flow_params_ar,
                   "BASE_FLOW_COLUMN": flow_baseflow,
+                  "BASE_MAX_ID_COLUMN": base_max_id_col,
                   "EXTENT": extent,
                   "CROP": crop,
                   "LAND_USE_FOLDER": self._format_files(lu_file),
@@ -448,49 +459,98 @@ class ManagerFacade():
             num /= 1024.0
         return f"{num:.1f} YB"
     
+    def read_for_map(self, minx, miny, maxx, maxy, strm_lines) -> gpd.GeoDataFrame:
+        if minx is None:
+            minx = 39.5
+        if miny is None:
+            miny = 39
+        if maxx is None:
+            maxx = -111
+        if maxy is None:
+            maxy = -110
+
+        if {minx, miny, maxx, maxy} == {0}: # If all are 0, then we have no data
+            gr.Info("0 means no extent was specified")
+            return None
+
+        if maxx <= minx:
+            gr.Warning('Max X is less than Min X')
+            return None
+        if maxy <= miny:
+            gr.Warning('Max Y is less than Min Y')
+            return None
+        if abs(miny) > 90  or abs(maxy) > 90 or maxx > 180 or minx < -180:
+            gr.Warning('Invalid coordinates')
+            return None
+
+        if not strm_lines:
+            return None
+        if os.path.isdir(strm_lines):
+            stream_files = [os.path.join(strm_lines,f) for f in os.listdir(strm_lines) if f.endswith(('.shp', '.gpkg', '.parquet', '.geoparquet'))]
+        elif os.path.isfile(strm_lines):
+            stream_files = [strm_lines]
+        else:
+            return None
+        
+        if not stream_files:
+            return None
+        
+        if self.map_df is not None and self.map_extents == [minx, miny, maxx, maxy] and self.strm_hash == hash(strm_lines):
+            return self.map_df
+        
+        a_file = stream_files[0]
+        data: dict = pyogrio.read_info(a_file)
+        if data.get('crs', False):
+            if pyproj.CRS.from_wkt(data['crs']).is_exact_same(pyproj.CRS.from_proj4("+proj=longlat +datum=WGS84 +no_defs")):
+                pass
+            else:
+                # Transform minx, miny, maxx, maxy to the crs of the file
+                transformer = Transformer.from_crs("EPSG:4326",data['crs'], always_xy=True)
+                minx1, miny1 = transformer.transform(minx, miny)
+                maxx1, maxy1 = transformer.transform(maxx, maxy)
+        else:
+            if np.abs(np.asarray(data['total_bounds'])).max() <= 180:
+                pass # Assume it's in WGS84
+            else:
+                gr.Warning(f"Could not determine the CRS for files in {strm_lines}")
+                return None
+            
+        dfs = []
+        for f in stream_files:
+            if self.in_extent(f, minx1, miny1, maxx1, maxy1):
+                if data['driver'].lower() == 'parquet':
+                    dfs.append(gpd.read_parquet(f, bbox=(minx1, miny1, maxx1, maxy1)))
+                else:
+                    dfs.append(gpd.read_file(f, bbox=(minx1, miny1, maxx1, maxy1)))
+
+        df = gpd.GeoDataFrame(pd.concat(dfs))
+        self.map_df = df
+        self.map_extents = [minx, miny, maxx, maxy]
+        self.strm_hash = hash(strm_lines)
+        return df
+
     def make_map(self, 
                  minx: float, 
                  miny: float, 
                  maxx: float, 
-                 maxy: float):
-        if minx is None:
-            minx = -180
-        if miny is None:
-            miny = -90
-        if maxx is None:
-            maxx = 180
-        if maxy is None:
-            maxy = 90
-
-        if {minx, miny, maxx, maxy} == {0}: # If all are 0, then we have no data
-            gr.Info("0 means no extent was specified")
-            return
-
-        if maxx <= minx:
-            gr.Warning('Max X is less than Min X')
-            return
-        if maxy <= miny:
-            gr.Warning('Max Y is less than Min Y')
-            return
-        if abs(miny) > 90  or abs(maxy) > 90 or maxx > 180 or minx < -180:
-            gr.Warning('Invalid coordinates')
-            return
-        transformer = Transformer.from_crs(f"EPSG:4326","EPSG:3857", always_xy=True) 
-        minx, miny = transformer.transform(minx, miny)
-        maxx, maxy =  transformer.transform(maxx, maxy)
+                 maxy: float,
+                 strm_lines: str):
+        df = self.read_for_map(minx, miny, maxx, maxy, strm_lines)
+        if df is None or df.empty:
+            return None
   
         dif = (((maxx - minx) + (maxy - miny)) / 2 ) * 0.25
         
         # Make some geometry to plot
-        df = gpd.GeoDataFrame(geometry=[LineString([(minx, miny), (maxx, miny), (maxx, maxy), (minx, maxy), (minx, miny)])],crs=3857)
-        
-        
+        df = df.to_crs(4326)
+        df: gpd.GeoDataFrame = pd.concat([df, gpd.GeoDataFrame(geometry=[box(minx, miny, maxx, maxy)], crs=4326)])
+
         plt.rcParams['figure.figsize'] = [12, 6]
         fig = plt.figure(edgecolor='black')
         ax = fig.add_axes([0, 0, 1, 1])
-        df.plot(ax=ax)
-        ax.set_xlim(max(minx - dif, -20026376.39), min(maxx + dif, 20026376.39))
-        ax.set_ylim(max(miny - dif, -20048966.1), min(maxy + dif, 20048966.1))
+        df.plot(ax=ax, facecolor='none', edgecolor='blue')
+        ax.set_xlim(max(minx - dif, -180), min(maxx + dif, 180))
+        ax.set_ylim(max(miny - dif, -90), min(maxy + dif, 90))
         ax.set_xticks([])
         ax.get_xaxis().set_visible(False)
         ax.get_yaxis().set_visible(False)
@@ -500,12 +560,95 @@ class ManagerFacade():
         ax.yaxis.set_major_locator(ticker.MaxNLocator(nbins=2))
 
         ctx.add_basemap(ax, 
-                    crs=3857, 
+                    crs=4326, 
                     attribution=False, 
-                    source=ctx.providers.Esri.WorldImagery
+                    source="https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}"
                     )
         
         return fig
+    
+    def in_extent(self, path1: str, minx: float, miny: float, maxx: float, maxy: float) -> bool:
+        data = pyogrio.read_info(path1)
+        if not data['crs']:
+            if np.abs(np.asarray(data['total_bounds'])).max() <= 180:
+                crs_epsg = 4326
+            else:
+                msg = f"Could not determine the CRS for {path1}"
+                LOG.error(msg)
+                gr.Error(msg)
+                return False
+        else:
+            try:
+                crs_epsg = int(data['crs'].split(':')[1])
+            except:
+                crs_epsg = pyproj.CRS.from_wkt(data['crs']).to_epsg()
+
+        f_extent = box(*data['total_bounds'])
+        if crs_epsg != 4326 and crs_epsg is not None:
+            transformer = Transformer.from_crs("EPSG:4326",f"EPSG:{crs_epsg}", always_xy=True) 
+            minx2, miny2 = transformer.transform(minx, miny)
+            maxx2, maxy2 =  transformer.transform(maxx, maxy)
+            bbox = box(minx2, miny2, maxx2, maxy2)
+        else:
+            bbox = box(minx, miny, maxx, maxy)
+        return f_extent.intersects(bbox)
+
+    def make_fancy_map(self, 
+                 minx: float, 
+                 miny: float, 
+                 maxx: float, 
+                 maxy: float,
+                 strm_lines: str) -> go.Figure:
+        df = self.read_for_map(minx, miny, maxx, maxy, strm_lines)
+        if df is None or df.empty:
+            return ""
+                
+        cols = set(df.columns)
+        id_col = [c for c in cols if c.lower() in ['linkno', 'comid', 'streamid', 'stream_id', 'tdxhydrolinkno', 'rivid', 'river_id', 'id']]
+        if id_col:
+            id_col = id_col[0]
+            df = df.set_index(id_col)
+        else:
+            id_col = 'id'
+
+        df = df.get_coordinates().rename_axis(id_col).groupby(id_col).agg(['first','last'])
+
+        lons = np.empty(3 * len(df))
+        lons[::3] = df[('x', 'first')].values
+        lons[1::3] = df[('x', 'last')].values
+        lons[2::3] = None
+        lons = np.append(lons, [minx, maxx, maxx, minx, minx, None])
+
+        lats = np.empty(3 * len(df))
+        lats[::3] = df[('y', 'first')].values
+        lats[1::3] = df[('y', 'last')].values
+        lats[2::3] = None
+        lats = np.append(lats, [miny, miny, maxy, maxy, miny, None])
+
+        names = np.empty(3 * len(df))
+        names[::3] = df.index.values
+        names[1::3] = df.index.values
+        names[2::3] = None
+        names = np.append(names, ['Extent', 'Extent', 'Extent', 'Extent', 'Extent', None])
+
+
+        fig = px.line_map(lat=lats, lon=lons, hover_name=names, center={'lat': (miny + maxy) / 2, 'lon': (minx + maxx) / 2}, zoom=9 )
+        fig.update_layout(
+            hovermode='closest',
+            map_layers=[
+                {
+                    "below": 'traces',
+                    "sourcetype": "raster",
+                    "sourceattribution": "United States Geological Survey",
+                    "source": [
+                        "https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}"
+                    ]
+                }
+            ],
+            margin={"r":0,"t":0,"l":0,"b":0}
+        )
+        fig.show()
+        return ""
         
     def get_forecast(self, input_path: str, output_path: str, date: str, ensemble: str) -> None:
         try:
