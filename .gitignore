@@ -3,8 +3,7 @@
 *.xml
 *.DS_Store
 *This is the*
-.vscode*
 tests\test_data\exes\*
 *.exe*
-.file_metadata.json
+.*
 *.egg-info

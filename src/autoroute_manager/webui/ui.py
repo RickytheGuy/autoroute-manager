@@ -146,6 +146,7 @@ def launch_interface():
                             buffer_distance = gr.Number(value=manager.default("buffer_distance"),
                                                         label='Buffer Distance',
                                                         visible=manager.default("buffer"),
+                                                        info='Amount to buffer DEMs in CRS units',
                                                         interactive=True)
                             buffer.change(lambda x: gr.Number(visible=x), inputs=buffer, outputs=buffer_distance)
                         
@@ -512,13 +513,13 @@ def launch_interface():
                                                         data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file, ar_exe, fs_exe, clean_outputs, buffer_distance,
                                                         use_ar_python, run_ar_bathy]
                 try:
-                    run_button.click(fn=manager._run, inputs=inputs)
+                    run_button.click(manager._run, inputs, dummy)
                 except Exception as e:
                     gr.Error(e)
                     LOG.error(e)
                                                 
-                save_button.click(fn=manager.save, inputs=inputs)
-                get_ids_button.click(fn=manager.get_ids, inputs=[dem, strm_lines, minx, miny, maxx, maxy, ids_folder, streamlines_id_col], outputs=[])
+                save_button.click(manager.save, inputs, dummy)
+                get_ids_button.click(manager.get_ids, [dem, strm_lines, minx, miny, maxx, maxy, ids_folder, streamlines_id_col], outputs=[])
 
             with gr.TabItem('File Preprocessing'):
                 with gr.Tabs():

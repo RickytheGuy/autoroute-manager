@@ -8,6 +8,7 @@ from typing import Tuple, Dict, List
 import multiprocessing
 import pyogrio
 import contextily as ctx
+import pyproj.exceptions
 import xarray as xr
 import gradio as gr
 import numpy as np
@@ -21,7 +22,6 @@ import geopandas as gpd
 
 from osgeo import gdal
 from shapely.geometry import box
-from shapely.geometry import LineString, MultiLineString
 from pyproj import Transformer
 
 from autoroute_manager.autoroute import AutoRoute
@@ -145,7 +145,7 @@ class ManagerFacade():
         return gdf[id_field].to_numpy().astype(int)
         
     
-    def save(self, *args) -> None:
+    def save(self, *args) -> str:
         """
         Save the modified documentation and defaults
 
@@ -168,7 +168,7 @@ class ManagerFacade():
         """
         if len(args) < 69: 
             LOG.warning('Could not save parameters')
-            return
+            return ""
         to_write = [
             {
                 "docs": self.docs,
@@ -252,6 +252,7 @@ class ManagerFacade():
             
         LOG.info("Parameters saved!")
         gr.Info("Parameters saved!")
+        return ""
 
     #@staticmethod
     def _format_files(self,file_path: str) -> str:
@@ -344,7 +345,7 @@ class ManagerFacade():
                                                     weight_angles, man_n, adjust_flow, bathy_alpha, ar_bathy, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
                                                     specify_depth, twd_factor, only_streams, use_ar_top_widths, flood_local, depth_map, flood_map, velocity_map, wse_map, fs_bathy_file, da_flow_param,
                                                     bathy_method,bathy_x_max_depth, bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,
-                                                    data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file,  ar_exe, fs_exe, clean_outputs, buffer_distance, use_ar_python, run_ar_bathy) -> None:
+                                                    data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file,  ar_exe, fs_exe, clean_outputs, buffer_distance, use_ar_python, run_ar_bathy) -> str:
         """
         Write the main input file
         """
@@ -353,12 +354,12 @@ class ManagerFacade():
                 msg = "Please specify a land use file when using ARC"
                 gr.Error(msg)
                 LOG.error(msg)
-                return
+                return ""
             if not mannings_table:
                 msg = "Please specify a Mannings Table when using ARC"
                 gr.Error(msg)
                 LOG.error(msg)
-                return
+                return ""
         gr.Info("Beginning model run!")
         if {minx, miny, maxx, maxy} == {0}:
             extent = None
@@ -437,6 +438,7 @@ class ManagerFacade():
         self.manager.setup(params)
         self.manager.run()
         gr.Info("Finished!")
+        return ""
         
     def _prepare_exe(self,exe: str) -> str:
         if SYSTEM == "Windows":
@@ -501,7 +503,11 @@ class ManagerFacade():
         a_file = stream_files[0]
         data: dict = pyogrio.read_info(a_file)
         if data.get('crs', False):
-            if pyproj.CRS.from_wkt(data['crs']).is_exact_same(pyproj.CRS.from_proj4("+proj=longlat +datum=WGS84 +no_defs")):
+            try:
+                data_crs = pyproj.CRS.from_wkt(data['crs'])
+            except pyproj.exceptions.CRSError:
+                data_crs = pyproj.CRS(data['crs'])
+            if data_crs.is_exact_same(pyproj.CRS.from_proj4("+proj=longlat +datum=WGS84 +no_defs")):
                 pass
             else:
                 # Transform minx, miny, maxx, maxy to the crs of the file
@@ -519,11 +525,22 @@ class ManagerFacade():
         for f in stream_files:
             if self.in_extent(f, minx1, miny1, maxx1, maxy1):
                 if data['driver'].lower() == 'parquet':
-                    dfs.append(gpd.read_parquet(f, bbox=(minx1, miny1, maxx1, maxy1)))
+                    temp = gpd.read_parquet(f)
+                    temp = temp.cx[minx1:maxx1, miny1:maxy1]
+                    dfs.append(temp)
                 else:
                     dfs.append(gpd.read_file(f, bbox=(minx1, miny1, maxx1, maxy1)))
 
         df = gpd.GeoDataFrame(pd.concat(dfs))
+        if df.crs is None:
+            if df.bounds.max().max() <= 180:
+                df = df.set_crs(epsg=4326)
+            else:
+                gr.Warning(f"Could not determine the CRS for files in {strm_lines}")
+                return None
+            
+        df = df.to_crs(4326)
+            
         self.map_df = df
         self.map_extents = [minx, miny, maxx, maxy]
         self.strm_hash = hash(strm_lines)
@@ -536,13 +553,12 @@ class ManagerFacade():
                  maxy: float,
                  strm_lines: str):
         df = self.read_for_map(minx, miny, maxx, maxy, strm_lines)
-        if df is None or df.empty:
+        if df is None:
             return None
   
         dif = (((maxx - minx) + (maxy - miny)) / 2 ) * 0.25
         
         # Make some geometry to plot
-        df = df.to_crs(4326)
         df: gpd.GeoDataFrame = pd.concat([df, gpd.GeoDataFrame(geometry=[box(minx, miny, maxx, maxy)], crs=4326)])
 
         plt.rcParams['figure.figsize'] = [12, 6]
@@ -641,12 +657,14 @@ class ManagerFacade():
                     "sourcetype": "raster",
                     "sourceattribution": "United States Geological Survey",
                     "source": [
-                        "https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}"
+                        #"https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}"
+                        "http://mt0.google.com/vt/lyrs=y&hl=en&x={x}&y={y}&z={z}"
                     ]
                 }
             ],
             margin={"r":0,"t":0,"l":0,"b":0}
         )
+        fig.update_traces(line=dict(width=5))
         fig.show()
         return ""
         
