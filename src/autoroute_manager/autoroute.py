@@ -17,7 +17,6 @@ import numpy as np
 from osgeo import gdal, osr, ogr
 from shapely.geometry import box
 from pyproj import Transformer
-from line_profiler import profile
 from autoroute_manager import LOG
 
 # Optional imports:
@@ -101,7 +100,7 @@ class AutoRoute:
             dems = {dem for dem in dems if self.is_in_extent(dem, self.EXTENT, True)}
             self.save_cache()
         return dems
-    #@profile
+
     def run(self) -> None:
         if self.USE_PYTHON:
             if not self.LAND_USE_FOLDER:
