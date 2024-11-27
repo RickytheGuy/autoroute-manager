@@ -69,7 +69,7 @@ class AutoRoute:
                 self._dem_strm_info_dict = dict(tmp)
 
         try:
-            from arc_byu.arc import Arc
+            from arc.arc import Arc
             self.arc = Arc
         except ModuleNotFoundError:
             self.arc = None
@@ -110,7 +110,6 @@ class AutoRoute:
                 LOG.error("ARC requires a Mannings Table. Exiting...")
                 return
         LOG.info("Starting model run...")
-        strms = []
         sim_flow_files = []
         flood_files = []
         if not self.test_ok():
@@ -138,8 +137,7 @@ class AutoRoute:
                 
             strms_dems, to_skip = self.map_dems_and_streams(dems)
             if strms_dems:
-                #strms = list(tqdm.tqdm(pool.imap_unordered(self.create_strm_file, strms_dems), total=len(strms_dems), disable=self.DISABLE_PBAR, desc="Creating stream rasters"))
-                self.create_strm_file(strms_dems[0])
+                strms = list(tqdm.tqdm(pool.imap_unordered(self.create_strm_file, strms_dems), total=len(strms_dems), disable=self.DISABLE_PBAR, desc="Creating stream rasters"))
                 strms = set(strm for strm_list in strms for strm in strm_list if strm)
                 strms = strms | to_skip
             else:
@@ -204,7 +202,7 @@ class AutoRoute:
                               desc="Running ARC", disable=self.DISABLE_PBAR))
 
             mifns_for_fs = None
-            if mifns and self.FLOODSPREADER or self.USE_PYTHON:
+            if mifns and (self.FLOODSPREADER or self.USE_PYTHON) and self.FLOOD_MAP:
                 mifns_for_fs = self.get_mifns_for_floodspreader(mifns)
             if mifns_for_fs and self.FLOODSPREADER and os.path.exists(self.FLOODSPREADER) and not self.USE_PYTHON:
                 list(tqdm.tqdm(pool.imap_unordered(self.run_floodspreader, mifns_for_fs), total=len(mifns_for_fs), 
@@ -533,12 +531,10 @@ class AutoRoute:
                 to_run.add(mifn)
 
         return to_run
-    
+
     def buffer_dem(self, dem: str) -> str:
         buffered_dem = os.path.join(self.DATA_DIR, 'dems', 'buffered', os.path.splitext(os.path.basename(dem))[0] + '_buff.tif')
-        # if os.path.exists(buffered_dem) and not self.OVERWRITE and self.hash_match(buffered_dem, dem, self.BUFFER_DISTANCE):
-        #     return buffered_dem
-        
+
         ds = self.open_w_gdal(dem)
         if not ds: return
         
@@ -615,20 +611,7 @@ class AutoRoute:
             raise NotImplementedError(f"Unsupported file type: {path}")
 
         return df
-         
-    def get_geotransform_from_gdf(self, gdf: gpd.GeoDataFrame, x_res: float, y_res: float) -> Tuple[float, ...]:
-         # Get the bounds of the GeoDataFrame
-        bounds = gdf.total_bounds  # returns (minx, miny, maxx, maxy)
-
-        # Calculate geotransform coefficients
-        minx, miny, maxx, maxy = bounds
-        x_min = minx
-        y_max = maxy
-        pixel_width = x_res
-        pixel_height = -y_res  # y_res is negative because the origin is at the top-left corner
-
-        return (x_min, pixel_width, 0, y_max, 0, pixel_height)
-          
+        
     def get_projection_from_gdf(self, gdf: gpd.GeoDataFrame) -> str:
         crs = gdf.crs
         if crs is None:
@@ -703,15 +686,15 @@ class AutoRoute:
             else:
                 if isinstance(self.SIMULATION_FLOW_COLUMN, str):
                     if self.SIMULATION_FLOW_COLUMN not in df.columns:
-                        raise ValueError(f"The flow field you've entered is not in the file\nflows entered: {self.SIMULATION_FLOW_COLUMN}, columns found: {list(df)}")
+                        raise ValueError(f"The flow field you've entered is not in the base-max file\nflows entered: {self.SIMULATION_FLOW_COLUMN}, columns found: {list(df)}")
                     cols = [self.BASE_MAX_ID_COLUMN, self.SIMULATION_FLOW_COLUMN]
                 elif isinstance(self.SIMULATION_FLOW_COLUMN, list):
                     if not all(f in df.columns for f in self.SIMULATION_FLOW_COLUMN):
-                        raise ValueError(f"The flow fields you've entered is not in the file\nflows entered: {self.SIMULATION_FLOW_COLUMN}, columns found: {list(df)}")
+                        raise ValueError(f"The flow fields you've entered is not in the base-max file\nflows entered: {self.SIMULATION_FLOW_COLUMN}, columns found: {list(df)}")
                     cols = [self.BASE_MAX_ID_COLUMN] + self.SIMULATION_FLOW_COLUMN
                 if self.BASE_FLOW_COLUMN:
                     if self.BASE_FLOW_COLUMN not in df.columns:
-                        raise ValueError(f"The baseflow field you've entered is not in the file\nflows entered: {self.SIMULATION_FLOW_COLUMN}, columns found: {list(df)}")
+                        raise ValueError(f"The baseflow field you've entered is not in the base-max file\nflows entered: {self.SIMULATION_FLOW_COLUMN}, columns found: {list(df)}")
                     cols.append(self.BASE_FLOW_COLUMN)
                     
             df = (
@@ -720,10 +703,10 @@ class AutoRoute:
             )
             df = df[cols]
             if df.empty:
-                LOG.error(f"No data in the flow file: {self.SIMULATION_FLOWFILE}")
+                LOG.error(f"No data in the base-max file: {self.SIMULATION_FLOWFILE}")
                 return
         else:
-            raise NotImplementedError(f"Unsupported file type: {self.SIMULATION_FLOWFILE}")
+            raise NotImplementedError(f"Unsupported base-max type: {self.SIMULATION_FLOWFILE}")
                 
         # Now look through the Raster to find the appropriate Information and print to the FlowFile
         with gdal.Open(strm) as ds:
@@ -734,7 +717,7 @@ class AutoRoute:
         matches = df[df[self.BASE_MAX_ID_COLUMN].isin(values)].shape[0]
 
         if matches == 0:
-            LOG.warning(f"{matches} id(s) out of {df.shape[0]} from your input file are present in the stream raster...")
+            LOG.warning(f"{matches} id(s) out of {df.shape[0]} from your base-max file are present in the stream raster...")
         
         sep = "," if self.USE_PYTHON else "\t"
         (
@@ -751,8 +734,6 @@ class AutoRoute:
             return
 
         flowfile = os.path.join(self.DATA_DIR, 'flow_files', f"{os.path.basename(strm).split('strm.')[0]}flow.txt")
-        # if not self.OVERWRITE and os.path.exists(flowfile) and self.hash_match(flowfile, self.FLOOD_FLOWFILE, strm, self.SIMULATION_ID_COLUMN, self.BASE_MAX_ID_COLUMN):
-        #     return flowfile
 
         if self.FLOOD_FLOWFILE.endswith(('.csv', '.txt')):
             df = (
@@ -760,7 +741,7 @@ class AutoRoute:
             )
             id_col = self.SIMULATION_ID_COLUMN
             if id_col not in df:
-                raise ValueError(f"The id field you've entered is not in the file\nids entered: {id_col}, columns found: {list(df)}")
+                raise ValueError(f"The id field you've entered is not in the flow file\nids entered: {id_col}, columns found: {list(df)}")
             df = (
                 df.drop_duplicates(id_col) 
                 .dropna()
@@ -769,7 +750,7 @@ class AutoRoute:
                 LOG.error(f"No data in the flow file: {self.FLOOD_FLOWFILE}")
                 return
         else:
-            raise NotImplementedError(f"Unsupported file type: {self.FLOOD_FLOWFILE}")
+            raise NotImplementedError(f"Unsupported flow type: {self.FLOOD_FLOWFILE}")
                 
         # Now look through the Raster to find the appropriate Information and print to the FlowFile
         with gdal.Open(strm) as ds:
@@ -964,15 +945,14 @@ class AutoRoute:
                     self._write(output,'Flow_File_QMax', " ".join(self.SIMULATION_FLOW_COLUMN))
                 else:
                     self._write(output,'RAPID_Flow_Param', " ".join(self.SIMULATION_FLOW_COLUMN))
+            if self.RAPID_Subtract_BaseFlow and not self.BASE_FLOW_COLUMN:
+                LOG.warning('Base Flow Parameter is not specified, not subtracting baseflow')
+            if self.USE_PYTHON:
+                self._write(output,'Flow_File_BF',self.BASE_FLOW_COLUMN)
+            else:
+                self._write(output,'RAPID_BaseFlow_Param',self.BASE_FLOW_COLUMN)
             if self.RAPID_Subtract_BaseFlow:
-                if not self.BASE_FLOW_COLUMN:
-                    LOG.warning('Base Flow Parameter is not specified, not subtracting baseflow')
-                else:
-                    if self.USE_PYTHON:
-                        self._write(output,'Flow_File_BF',self.BASE_FLOW_COLUMN)
-                    else:
-                        self._write(output,'RAPID_BaseFlow_Param',self.BASE_FLOW_COLUMN)
-                    self._write(output,'RAPID_Subtract_BaseFlow')
+                self._write(output,'RAPID_Subtract_BaseFlow')
 
         if self.VDT:
             vdt = os.path.join(self._format_path(self.VDT), f"{os.path.basename(dem).split('.')[0]}__vdt.txt")
@@ -1093,7 +1073,7 @@ class AutoRoute:
                 id_flow_file = self._format_path(flowfile)
                 self._warn_DNE('ID Flow File', id_flow_file)
                 self._check_type('ID Flow File', id_flow_file, ['.txt','.csv'])
-                self._write(output,'Comid_Flow_File',id_flow_file)
+                self._write(output,'COMID_Flow_File',id_flow_file)
 
 
         if self.FLOODSPREADER and os.path.exists(self.FLOODSPREADER) and not self.USE_PYTHON:
@@ -1275,17 +1255,6 @@ class AutoRoute:
 
 
     def run_curve_2_fld(self, mifn: str) -> None:
-        # fld_map = self.get_item_from_mifn(mifn, key='OutFLD')
-        # dep_map = self.get_item_from_mifn(mifn, key='OutDEP')
-        # vel_map = self.get_item_from_mifn(mifn, key='OutVEL')
-        # wse_map = self.get_item_from_mifn(mifn, key='OutWSE')
-        # fs_bathy_file = self.get_item_from_mifn(mifn, key='FSOutBATHY')
-        # maps = {fld_map, dep_map, vel_map, wse_map, fs_bathy_file} - {""}
-        # mifn_contents = open(mifn).read()
-        
-        # if not self.OVERWRITE and all(os.path.exists(m) for m in maps) and all(self.hash_match(m, mifn_contents) for m in maps):
-        #     return
-        
         try:
             self.arc(mifn, True).flood()
             # for m in maps:
@@ -1303,11 +1272,7 @@ class AutoRoute:
             LOG.error(f"AutoRoute executable not found: {exe}")
             return
         mifn = self._format_path(mifn.strip())
-
         vdt = self.get_item_from_mifn(mifn, key='Print_VDT_Database')
-        # ar_bathy = self.get_item_from_mifn(mifn, key='BATHY_Out_File')
-        # if not self.OVERWRITE and vdt and os.path.exists(vdt) and self.hash_match(vdt, open(vdt).read(), ar_bathy):
-        #     return
 
         process = subprocess.run(f'conda activate {self.AUTOROUTE_CONDA_ENV} && echo "a" | {exe} {mifn}', # We echo a dummy input in so that AutoRoute can terminate if some input is wrong
                                     stdout=subprocess.PIPE,
@@ -1328,7 +1293,6 @@ class AutoRoute:
             LOG.error(f"AutoRoute did not create a vdt file: {vdt}")
             return process.stdout.decode('utf-8') + process.stderr.decode('utf-8')
         
-        # self.update_hash(vdt, open(vdt).read(), ar_bathy)
         self.ar_arc_add_hash(mifn)
         return process.stdout.decode('utf-8') + process.stderr.decode('utf-8')
 
@@ -1393,31 +1357,30 @@ class AutoRoute:
             if process.returncode != 0:
                 LOG.error(f"Error activating conda environment: {process.stderr.decode('utf-8')}")
                 raise ValueError(f"Error activating conda environment: {process.stderr.decode('utf-8')}")
-            return False
         
         if self.STREAM_NETWORK_FOLDER:
                 if self.STREAM_ID == None:
                     LOG.error(f"No stream id provided! Aborting...")
-                    return False
+                    raise RuntimeError(f"No stream id provided! Aborting...")
         else:
             LOG.error("No stream network folder or stream name provided. Exiting...")
-            return False
+            raise RuntimeError("No stream network folder or stream name provided. Exiting...")
         
         if not self.SIMULATION_FLOWFILE:
             LOG.error("No flow file provided. Exiting...")
-            return False
+            raise RuntimeError("No flow file provided. Exiting...")
         
         if not self.FLOOD_FLOWFILE:
             LOG.error("No flood file provided. Exiting...")
-            return False
+            raise RuntimeError("No flood file provided. Exiting...")
         
         if not self.SIMULATION_ID_COLUMN:
             LOG.error("No flow file id column provided. Exiting...")
-            return False
+            raise RuntimeError("No flow file id column provided. Exiting...")
         
         if not self.BASE_MAX_ID_COLUMN:
             LOG.error("No base flow id column provided. Exiting...")
-            return False
+            raise RuntimeError("No base flow id column provided. Exiting...")
         
         return True
     
@@ -1431,7 +1394,7 @@ class AutoRoute:
             fs_bathy = self.get_item_from_mifn(mifn, key='FSOutBATHY')
             ar_bathy = self.get_item_from_mifn(mifn, key='BATHY_Out_File')
             maps = {fld_map, dep_map, vel_map, wse_map, fs_bathy, ar_bathy} - {""}
-            all_maps.update(maps)
+            all_maps.update({map for map in maps if os.path.exists(map)})
 
         return all_maps
     
@@ -1592,7 +1555,10 @@ class AutoRoute:
                 return None
             layer: ogr.Layer = ds.GetLayer()
             spatial_ref = layer.GetSpatialRef()
-            crs_epsg = spatial_ref.GetAuthorityCode("GEOGCS") or spatial_ref.GetAuthorityCode("PROJCS") if spatial_ref else 4326
+            if spatial_ref:
+                crs_epsg = spatial_ref.GetAuthorityCode("PROJCS") if spatial_ref.IsProjected() else spatial_ref.GetAuthorityCode("GEOGCS")
+            else:
+                crs_epsg = 4326    
             crs_epsg = int(crs_epsg)
             minx, maxx, miny, maxy = layer.GetExtent()
             return [stream, crs_epsg, [minx, miny, maxx, maxy]]
@@ -1648,8 +1614,8 @@ class AutoRoute:
                         transformer_dict[(dem_epsg, strm_epsg)] = Transformer.from_crs(f"EPSG:{dem_epsg}", f"EPSG:{strm_epsg}", always_xy=True)
 
                     transformer = transformer_dict[(dem_epsg, strm_epsg)]
-                    minx, miny = transformer.transform(minx, miny)
-                    maxx, maxy = transformer.transform(maxx, maxy)
+                    minx, miny = transformer.transform(dem_extent[0], dem_extent[1])
+                    maxx, maxy = transformer.transform(dem_extent[2], dem_extent[3])
                 if self._isin(minx, miny, maxx, maxy, f_extent):
                     mapping_dict[dem].append(stream_name)
         

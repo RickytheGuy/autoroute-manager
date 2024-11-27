@@ -20,7 +20,7 @@ import matplotlib.ticker as ticker
 import pandas as pd
 import geopandas as gpd
 
-from osgeo import gdal
+from osgeo import gdal, ogr
 from shapely.geometry import box
 from pyproj import Transformer
 
@@ -39,6 +39,16 @@ class ManagerFacade():
     def init(self) -> None:
         self.manager = AutoRoute(None)
         self.docs_file = 'defaults_and_docs.json'
+        self._strm_info_file = os.path.join(os.path.dirname(__file__), '.files_info.json')
+        self._strm_info_dict = {}
+        if os.path.exists(self._strm_info_file):
+            with open(self._strm_info_file, 'r') as f:
+                try:
+                    tmp = json.load(f)
+                except json.JSONDecodeError:
+                    tmp = {}
+                self._strm_info_dict = dict(tmp)
+
         docs = None
         data = None
         if not os.path.exists(self.docs_file):
@@ -492,6 +502,9 @@ class ManagerFacade():
         elif os.path.isfile(strm_lines):
             stream_files = [strm_lines]
         else:
+            msg = f"Could  not figure out what {stream_files} is"
+            gr.Error(msg)
+            LOG.error(msg)
             return None
         
         if not stream_files:
@@ -502,6 +515,7 @@ class ManagerFacade():
         
         a_file = stream_files[0]
         data: dict = pyogrio.read_info(a_file)
+        minx1, miny1, maxx1, maxy1 = minx, maxx, miny, maxy
         if data.get('crs', False):
             try:
                 data_crs = pyproj.CRS.from_wkt(data['crs'])
@@ -522,14 +536,36 @@ class ManagerFacade():
                 return None
             
         dfs = []
+        save = False
         for f in stream_files:
-            if self.in_extent(f, minx1, miny1, maxx1, maxy1):
-                if data['driver'].lower() == 'parquet':
-                    temp = gpd.read_parquet(f)
-                    temp = temp.cx[minx1:maxx1, miny1:maxy1]
-                    dfs.append(temp)
+            if f in self._strm_info_dict:
+                crs_epsg, extent = self._strm_info_dict[f]
+                if not self.in_extent(crs_epsg, *extent, [minx1, maxx1, miny1, maxy1]):
+                    continue
+            else:
+                ds: ogr.DataSource = ogr.Open(f)
+                layer: ogr.Layer = ds.GetLayer()
+                spatial_ref = layer.GetSpatialRef()
+                if spatial_ref:
+                    crs_epsg = spatial_ref.GetAuthorityCode("PROJCS") if spatial_ref.IsProjected() else spatial_ref.GetAuthorityCode("GEOGCS")
                 else:
-                    dfs.append(gpd.read_file(f, bbox=(minx1, miny1, maxx1, maxy1)))
+                    crs_epsg = 4326   
+                crs_epsg = int(crs_epsg)
+                _minx, _maxx, _miny, _maxy = layer.GetExtent()
+                self._strm_info_dict[f] = [crs_epsg, [_minx, _miny, _maxx, _maxy]]
+                save = True
+
+                if not self.in_extent(crs_epsg, minx1, miny1, maxx1, maxy1, [_minx, _miny, _maxx, _maxy]):
+                    continue
+
+            if data['driver'].lower() == 'parquet':
+                temp = gpd.read_parquet(f)
+                temp = temp.cx[minx1:maxx1, miny1:maxy1]
+                dfs.append(temp)
+            else:
+                dfs.append(gpd.read_file(f, bbox=(minx1, miny1, maxx1, maxy1)))
+
+        if save: self.save_strm_info()
 
         df = gpd.GeoDataFrame(pd.concat(dfs))
         if df.crs is None:
@@ -552,6 +588,7 @@ class ManagerFacade():
                  maxx: float, 
                  maxy: float,
                  strm_lines: str):
+        strm_lines = self._format_files(strm_lines)
         df = self.read_for_map(minx, miny, maxx, maxy, strm_lines)
         if df is None:
             return None
@@ -583,23 +620,8 @@ class ManagerFacade():
         
         return fig
     
-    def in_extent(self, path1: str, minx: float, miny: float, maxx: float, maxy: float) -> bool:
-        data = pyogrio.read_info(path1)
-        if not data['crs']:
-            if np.abs(np.asarray(data['total_bounds'])).max() <= 180:
-                crs_epsg = 4326
-            else:
-                msg = f"Could not determine the CRS for {path1}"
-                LOG.error(msg)
-                gr.Error(msg)
-                return False
-        else:
-            try:
-                crs_epsg = int(data['crs'].split(':')[1])
-            except:
-                crs_epsg = pyproj.CRS.from_wkt(data['crs']).to_epsg()
-
-        f_extent = box(*data['total_bounds'])
+    def in_extent(self, crs_epsg: int, minx: float, miny: float, maxx: float, maxy: float, extent: list) -> bool:
+        f_extent = box(*extent)
         if crs_epsg != 4326 and crs_epsg is not None:
             transformer = Transformer.from_crs("EPSG:4326",f"EPSG:{crs_epsg}", always_xy=True) 
             minx2, miny2 = transformer.transform(minx, miny)
@@ -615,6 +637,7 @@ class ManagerFacade():
                  maxx: float, 
                  maxy: float,
                  strm_lines: str) -> go.Figure:
+        strm_lines = self._format_files(strm_lines)
         df = self.read_for_map(minx, miny, maxx, maxy, strm_lines)
         if df is None or df.empty:
             return ""
@@ -787,6 +810,10 @@ class ManagerFacade():
             return [(alist[x:x+n], add_tuple) for x in range(0, len(alist), n)]
         
         return [alist[x:x+n] for x in range(0, len(alist), n)]
+    
+    def save_strm_info(self) -> None:
+        with open(self._strm_info_file, 'w') as f:
+            json.dump(self._strm_info_dict, f, indent=4)
     
 def help_get_forecast_median(ids: list, date: str) -> list:
     import geoglows
