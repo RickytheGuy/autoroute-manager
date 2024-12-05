@@ -3,6 +3,7 @@ import os
 import json
 import platform
 import re
+import threading
 from typing import Tuple, Dict, List
 
 import multiprocessing
@@ -589,14 +590,16 @@ class ManagerFacade():
                  maxy: float,
                  strm_lines: str):
         strm_lines = self._format_files(strm_lines)
-        df = self.read_for_map(minx, miny, maxx, maxy, strm_lines)
-        if df is None:
-            return None
-  
+        if self.map_df is not None:
+            dfs = [self.map_df, gpd.GeoDataFrame(geometry=[box(minx, miny, maxx, maxy)], crs=4326)]
+        else:
+            thread = threading.Thread(target=self.read_for_map, args=(minx, miny, maxx, maxy, strm_lines))
+            thread.start()
+            dfs = [gpd.GeoDataFrame(geometry=[box(minx, miny, maxx, maxy)], crs=4326)]
         dif = (((maxx - minx) + (maxy - miny)) / 2 ) * 0.25
         
         # Make some geometry to plot
-        df: gpd.GeoDataFrame = pd.concat([df, gpd.GeoDataFrame(geometry=[box(minx, miny, maxx, maxy)], crs=4326)])
+        df: gpd.GeoDataFrame = pd.concat(dfs)
 
         plt.rcParams['figure.figsize'] = [12, 6]
         fig = plt.figure(edgecolor='black')
