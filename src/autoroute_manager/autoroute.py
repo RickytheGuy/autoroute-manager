@@ -720,8 +720,13 @@ class AutoRoute:
             LOG.warning(f"{matches} id(s) out of {df.shape[0]} from your base-max file are present in the stream raster...")
         
         sep = "," if self.USE_PYTHON else "\t"
+        if self.USE_PYTHON:
+            df = pd.DataFrame({self.BASE_MAX_ID_COLUMN: values})
+        else:
+            df = pd.DataFrame({'ROW': indices[0], 'COL': indices[1], self.BASE_MAX_ID_COLUMN: values})
+
         (
-            pd.DataFrame({'ROW': indices[0], 'COL': indices[1], self.BASE_MAX_ID_COLUMN: values})
+            df
             .merge(df, on=self.BASE_MAX_ID_COLUMN, how='left')
             .fillna(0)
             .to_csv(row_col_file, sep=sep, index=False)
