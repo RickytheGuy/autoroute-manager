@@ -721,12 +721,12 @@ class AutoRoute:
         
         sep = "," if self.USE_PYTHON else "\t"
         if self.USE_PYTHON:
-            df = pd.DataFrame({self.BASE_MAX_ID_COLUMN: values})
+            temp = pd.DataFrame({self.BASE_MAX_ID_COLUMN: values})
         else:
-            df = pd.DataFrame({'ROW': indices[0], 'COL': indices[1], self.BASE_MAX_ID_COLUMN: values})
+            temp = pd.DataFrame({'ROW': indices[0], 'COL': indices[1], self.BASE_MAX_ID_COLUMN: values})
 
         (
-            df
+            temp
             .merge(df, on=self.BASE_MAX_ID_COLUMN, how='left')
             .fillna(0)
             .to_csv(row_col_file, sep=sep, index=False)
