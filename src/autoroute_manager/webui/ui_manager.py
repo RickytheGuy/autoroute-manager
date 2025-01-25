@@ -163,11 +163,11 @@ class ManagerFacade():
         order of args: 
         0. dem, curve_file, strm_lines, id_flow_id_col, lu_file, 
         5. base_max_id_col, base_max_file, subtract_baseflow, streamlines_id_col, flow_params, 
-        10. flow_baseflow, num_iterations,meta_file, convert_cfs_to_cms, x_distance, 
+        10. flow_baseflow, num_iterations, top_width_plausible_limit, convert_cfs_to_cms, x_distance, 
         15. q_limit, LU_Manning_n, direction_distance, slope_distance, low_spot_distance, 
         20. low_spot_is_meters,low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, 
-        25. degree_manip, degree_interval, Str_Limit_Val, UP_Str_Limit_Val, row_start, 
-        30. row_end, use_prev_d_4_xs,weight_angles, man_n, adjust_flow, 
+        25. degree_manip, degree_interval, tw_mult_factor, set_depth, flood_lc_and_stream, 
+        30. lc_water_value, use_prev_d_4_xs,weight_angles, man_n, adjust_flow, 
         35. bathy_alpha, ar_bathy_out_file, id_flow_file, omit_outliers, wse_search_dist, 
         40. wse_threshold, wse_remove_three,specify_depth, twd_factor, only_streams, 
         45. use_ar_top_widths, flood_local, depth_map, flood_map, velocity_map, 
@@ -218,7 +218,12 @@ class ManagerFacade():
 
                     "ADJUST_FLOW_BY_FRACTION":args[34],
                     "BATHY_Out_File":args[36],
-                    "Meta_File":args[12],
+                    "top_width_plausible_limit":args[12],
+                    "tw_mult_factor":args[27],
+                    "set_depth": args[28],
+                    "flood_lc_and_stream": args[29],
+                    "lc_water_value": args[30],
+
                     "Comid_Flow_File":args[37],
                     "fs_bathy_file":args[51],
                     "omit_outliers":args[38],
@@ -351,8 +356,8 @@ class ManagerFacade():
             return gr.Markdown(visible=False), gr.DataFrame(visible=False), gr.Textbox(visible=False)
 
     async def _run(self,dem, curve_file, strm_lines, id_flow_id_col, lu_file, base_max_id_col, base_max_file, subtract_baseflow, streamlines_id_col, flow_params_ar, flow_baseflow, num_iterations,
-                                                    meta_file, convert_cfs_to_cms, x_distance, q_limit, mannings_table, direction_distance, slope_distance, low_spot_distance, low_spot_is_meters,
-                                                    low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, degree_manip, degree_interval, Str_Limit_Val, UP_Str_Limit_Val, row_start, row_end, use_prev_d_4_xs,
+                                                    top_width_plausible_limit, convert_cfs_to_cms, x_distance, q_limit, mannings_table, direction_distance, slope_distance, low_spot_distance, low_spot_is_meters,
+                                                    low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, degree_manip, degree_interval, tw_mult_factor, set_depth, flood_lc_and_stream, lc_water_value, use_prev_d_4_xs,
                                                     weight_angles, man_n, adjust_flow, bathy_alpha, ar_bathy, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
                                                     specify_depth, twd_factor, only_streams, use_ar_top_widths, flood_local, depth_map, flood_map, velocity_map, wse_map, fs_bathy_file, da_flow_param,
                                                     bathy_method,bathy_x_max_depth, bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,
@@ -372,7 +377,7 @@ class ManagerFacade():
                 LOG.error(msg)
                 return ""
         gr.Info("Beginning model run!")
-        if {minx, miny, maxx, maxy} == {0}:
+        if {minx, miny, maxx, maxy} == {0} or None in {minx, miny, maxx, maxy}:
             extent = None
         else:
             extent = (minx, miny, maxx, maxy)
@@ -445,6 +450,12 @@ class ManagerFacade():
                   "fs_bathy_file": self._format_files(fs_bathy_file),
                   "fs_bathy_smooth_method": fs_bathy_smooth_method,
                   "bathy_twd_factor": bathy_twd_factor,
+
+                  "top_width_plausible_limit": top_width_plausible_limit,
+                  "tw_mult_factor": tw_mult_factor,
+                  "set_depth": set_depth,
+                  "flood_lc_and_stream": flood_lc_and_stream,
+                  "lc_water_value": lc_water_value,
         }
         self.manager.setup(params)
         self.manager.run()
@@ -495,15 +506,18 @@ class ManagerFacade():
         if abs(miny) > 90  or abs(maxy) > 90 or maxx > 180 or minx < -180:
             gr.Warning('Invalid coordinates')
             return None
+        
+        strm_lines = self._format_files(strm_lines)
 
         if not strm_lines:
             return None
+        
         if os.path.isdir(strm_lines):
             stream_files = [os.path.join(strm_lines,f) for f in os.listdir(strm_lines) if f.endswith(('.shp', '.gpkg', '.parquet', '.geoparquet'))]
         elif os.path.isfile(strm_lines):
             stream_files = [strm_lines]
         else:
-            msg = f"Could  not figure out what {stream_files} is"
+            msg = f" Mapping: Could  not figure out what {strm_lines} is"
             gr.Error(msg)
             LOG.error(msg)
             return None
@@ -568,6 +582,10 @@ class ManagerFacade():
 
         if save: self.save_strm_info()
 
+        if not dfs:
+            gr.Warning("Nothing found in given extent")
+            return None
+
         df = gpd.GeoDataFrame(pd.concat(dfs))
         if df.crs is None:
             if df.bounds.max().max() <= 180:
@@ -593,6 +611,10 @@ class ManagerFacade():
         if self.map_df is not None:
             dfs = [self.map_df, gpd.GeoDataFrame(geometry=[box(minx, miny, maxx, maxy)], crs=4326)]
         else:
+            if minx is None or miny is None or maxx is None or maxy is None or sum([minx, miny, maxx, maxy]) == 0:
+                gr.Warning("No extent specified")
+                return plt.figure(edgecolor='black')
+            
             thread = threading.Thread(target=self.read_for_map, args=(minx, miny, maxx, maxy, strm_lines))
             thread.start()
             dfs = [gpd.GeoDataFrame(geometry=[box(minx, miny, maxx, maxy)], crs=4326)]

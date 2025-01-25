@@ -74,6 +74,12 @@ class AutoRoute:
         except ModuleNotFoundError:
             self.arc = None
 
+        try: 
+            from curve2flood import Curve2Flood_MainFunction
+            self.curve2flood = Curve2Flood_MainFunction
+        except ModuleNotFoundError:
+            self.curve2flood = None
+
     def clear_temp_files(self) -> None:
         """
         Clear all temporary files created by the program
@@ -358,12 +364,18 @@ class AutoRoute:
         self.fs_bathy_smooth_method = ''
         self.bathy_twd_factor = 1
 
+        self.top_width_plausible_limit = 600
+        self.tw_mult_factor = 1.5
+        self.set_depth = 0.
+        self.flood_lc_and_stream = False
+        self.lc_water_value = -1
+
         if isinstance(yaml_file, dict):
             for key, value in yaml_file.items():
                 setattr(self, key, value)
         elif isinstance(yaml_file, str):
             with open(yaml_file, 'r') as f:
-                data = yaml.safe_load(f)
+                data: dict = yaml.safe_load(f)
                 for key, value in data.items():
                     setattr(self, key, value)
 
@@ -372,10 +384,8 @@ class AutoRoute:
             LOG.warning(f'No working folder provided! Using {self.DATA_DIR}')
         if not os.path.isabs(self.DATA_DIR):
             self.DATA_DIR = os.path.abspath(self.DATA_DIR)
-        os.makedirs(self.DATA_DIR, exist_ok = True)
-        with open(os.path.join(self.DATA_DIR,'This is the working folder. Please delete and modify with caution.txt'), 'a') as f:
-            pass
 
+        os.makedirs(self.DATA_DIR, exist_ok = True)
         os.makedirs(os.path.join(self.DATA_DIR,'dems'), exist_ok = True)
         os.makedirs(os.path.join(self.DATA_DIR,'dems', 'buffered'), exist_ok = True)
         os.makedirs(os.path.join(self.DATA_DIR,'dems', 'cropped'), exist_ok = True)
@@ -525,7 +535,8 @@ class AutoRoute:
             if not self.OVERWRITE and all(os.path.exists(f) for f in outputs) and all(self.hash_match(f, *lines, f, self.USE_PYTHON, self.FLOOD_FLOWFILE,
                              self.EXTENT, self.da_flow_param, self.omit_outliers, self.wse_search_dist, self.wse_threshold, self.wse_remove_three, 
                              self.specify_depth, self.twd_factor, self.only_streams, self.use_ar_top_widths, self.flood_local, self.DEPTH_MAP, 
-                             self.FLOOD_MAP, self.VELOCITY_MAP, self.WSE_MAP, self.fs_bathy_file, self.fs_bathy_smooth_method, self.bathy_twd_factor) for f in outputs):
+                             self.FLOOD_MAP, self.VELOCITY_MAP, self.WSE_MAP, self.fs_bathy_file, self.fs_bathy_smooth_method, self.bathy_twd_factor,
+                             self.top_width_plausible_limit, self.tw_mult_factor, self.set_depth, self.flood_lc_and_stream, self.lc_water_value) for f in outputs):
                 pass
             else:
                 to_run.add(mifn)
@@ -782,7 +793,7 @@ class AutoRoute:
             LOG.warning(f'Could not open {dem}. Skipping...')
             return
         
-        dem_epsg = self.get_epsg(dem_ds)
+        # dem_epsg = self.get_spatial_ref(dem_ds)
         projection = dem_ds.GetProjection()
         dem_spatial_ref = dem_ds.GetSpatialRef()
 
@@ -802,10 +813,10 @@ class AutoRoute:
             return
         
         # Loop over every file in the land use folder and check if it intersects with the dem
-        lu_epsg = self.get_epsg(self.open_w_gdal(lu_files[0]))
-        if dem_epsg != lu_epsg:
-            out_spatial_ref = osr.SpatialReference()
-            out_spatial_ref.ImportFromEPSG(lu_epsg)
+        # lu_epsg = self.get_spatial_ref(self.open_w_gdal(lu_files[0]))
+        lu_spatial_ref: osr.SpatialReference = self.open_w_gdal(lu_files[0]).GetSpatialRef()
+        if dem_spatial_ref != lu_spatial_ref:
+            out_spatial_ref = lu_spatial_ref
             out_spatial_ref.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
             coordTrans = osr.CoordinateTransformation(dem_spatial_ref, out_spatial_ref)
 
@@ -816,7 +827,7 @@ class AutoRoute:
                     LOG.warning(f'Could not open {f}. Skipping...')
                     continue
                 minx2, miny2, maxx2, maxy2 = minx, miny, maxx, maxy
-                if dem_epsg != lu_epsg:
+                if dem_spatial_ref != lu_spatial_ref:
                     minx2, miny2, _ = coordTrans.TransformPoint(minx, miny)
                     maxx2, maxy2, _ = coordTrans.TransformPoint(maxx, maxy)
                     
@@ -831,7 +842,7 @@ class AutoRoute:
             LOG.warning(f"No land use files found in the extent of {dem}")
             return
         
-        if dem_epsg != lu_epsg:
+        if dem_spatial_ref != lu_spatial_ref:
             options = gdal.WarpOptions(
                 format='GTiff',
                 dstSRS=projection,
@@ -859,9 +870,9 @@ class AutoRoute:
     def all_files_match_projections(self, files: List[str]) -> bool:
         if not files: return True
         try:
-            ds_code = self.get_epsg(self.open_w_gdal(files[0]))
+            spatial_ref = self.open_w_gdal(files[0]).GetSpatialRef()
             for f in files[1:]:
-                if ds_code != self.get_epsg(self.open_w_gdal(f)):
+                if spatial_ref != self.open_w_gdal(f).GetSpatialRef():
                     return False
         except:
             LOG.warning(f"Problems with a file")
@@ -870,8 +881,10 @@ class AutoRoute:
 
     def get_epsg(self, ds: gdal.Dataset) -> int:
         dem_spatial_ref = ds.GetSpatialRef()
-        dem_sr = osr.SpatialReference(str(dem_spatial_ref)) # load projection
-        return int(dem_sr.GetAuthorityCode(None)) # get EPSG code
+        epsg = dem_spatial_ref.GetAuthorityCode(None)
+        if not epsg:
+            raise ValueError("No EPSG code found in the spatial reference")
+        return int(epsg) # get EPSG code
 
     def list_to_sublists(self, alist: List[Any], n: int) -> List[List[Any]]:
         return [alist[x:x+n] for x in range(0, len(alist), n)]
@@ -910,7 +923,7 @@ class AutoRoute:
  
         if srs.IsProjected():
             units = srs.GetLinearUnitsName().lower()
-            if "meter" in units:
+            if units in ['meter', 'metre']:
                 if "k" in units:
                     self._write(output,'Spatial_Units',"km")
                 else:
@@ -1073,7 +1086,7 @@ class AutoRoute:
         if (self.FLOODSPREADER and os.path.exists(self.FLOODSPREADER)) or self.USE_PYTHON:
             if self.twd_factor != 1.5:
                 self._write(output,'TopWidthDistanceFactor',self.twd_factor)
-            if self.flood_local: self._write(output,'FloodLocalOnly')
+            if self.flood_local: self._write(output, 'LocalFloodOption') if self.USE_PYTHON else self._write(output,'FloodLocalOnly') 
             if flowfile:
                 id_flow_file = self._format_path(flowfile)
                 self._warn_DNE('ID Flow File', id_flow_file)
@@ -1153,6 +1166,15 @@ class AutoRoute:
                     self._write(output,'AROutFLOOD',flood_map)
                 self._write(output,'OutFLD',flood_map)
 
+        if self.USE_PYTHON:
+            self._write(output, "TopWidthPlausibleLimit", self.top_width_plausible_limit)
+            self._write(output, "TW_MultFact", self.tw_mult_factor)
+            self._write(output, "Set_Depth", self.set_depth)
+            if self.lc_water_value >= 0:
+                self._write(output, "LAND_WaterValue", self.lc_water_value)
+            if self.flood_lc_and_stream:
+                self._write(output, "Flood_WaterLC_and_STRM_Cells")
+
         contents = "\n".join(output)
         with open(mifn, 'w', encoding='utf-8') as f:
             f.write(contents)
@@ -1169,12 +1191,12 @@ class AutoRoute:
         
     def _write(self, f: Union[List, TextIO], Card, Argument = '') -> None:
         if not isinstance(f, list):
-            if Argument:
+            if Argument != '':
                 f.write(f"{Card}\t{Argument}\n")
             else:
                 f.write(f"{Card}\n")
         else:
-            if Argument:
+            if Argument != '':
                 f.append(f"{Card}\t{Argument}")
             else:
                 f.append(f"{Card}")
@@ -1246,7 +1268,8 @@ class AutoRoute:
             self.update_hash(f, *lines, f, self.USE_PYTHON, self.FLOOD_FLOWFILE,
                              self.EXTENT, self.da_flow_param, self.omit_outliers, self.wse_search_dist, self.wse_threshold, self.wse_remove_three, 
                              self.specify_depth, self.twd_factor, self.only_streams, self.use_ar_top_widths, self.flood_local, self.DEPTH_MAP, 
-                             self.FLOOD_MAP, self.VELOCITY_MAP, self.WSE_MAP, self.fs_bathy_file, self.fs_bathy_smooth_method, self.bathy_twd_factor)
+                             self.FLOOD_MAP, self.VELOCITY_MAP, self.WSE_MAP, self.fs_bathy_file, self.fs_bathy_smooth_method, self.bathy_twd_factor,
+                             self.top_width_plausible_limit, self.tw_mult_factor, self.set_depth, self.lc_water_value)
 
     def run_arc(self, mifn: str) -> None:
         try:
@@ -1261,14 +1284,12 @@ class AutoRoute:
 
     def run_curve_2_fld(self, mifn: str) -> None:
         try:
-            self.arc(mifn, True).flood()
-            # for m in maps:
-            #     self.hash_match(m, mifn_contents)
+            self.curve2flood(mifn)
             self.fs_curve_add_hash(mifn)
         except TypeError as e:
             LOG.warning("ARC is not installed. Skipping...")
         except Exception as e:
-            msg = f'Error running ARC flood mapper:\n{e}'
+            msg = f'Error running Curve2Flood:\n{e}'
             LOG.error(msg)
 
     def run_autoroute(self, mifn: str) -> None:
