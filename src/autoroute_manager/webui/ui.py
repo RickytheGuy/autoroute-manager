@@ -225,6 +225,11 @@ def launch_interface():
                                     visible=not bool(manager.default("use_ar_python"))
                                 )
 
+                                xs_dir = gr.Textbox(value=manager.default("xs_dir"),
+                                    placeholder='/User/Desktop/xs',
+                                    label="Output Cross Section Folder",
+                                )
+
                                 run_button = gr.Button("Run Model", variant='primary')
                                 save_button = gr.Button("Save Parameters")
                                 get_ids_button = gr.Button("Get IDs from Inputs Given")
@@ -268,12 +273,6 @@ def launch_interface():
                                                 visible=not bool(manager.default("use_ar_python")))
                             use_ar_python.change(lambda x: gr.Number(visible=not x), inputs=use_ar_python, outputs=num_iterations)
                 
-                            meta_file = gr.Textbox(value=manager.default("Meta_File"),
-                                            placeholder='/User/Desktop/meta.txt',
-                                            label="Meta File",
-                                            #info=manager.doc('Meta_File')
-                                )
-
                             with gr.Row():
                                 convert_cfs_to_cms = gr.Checkbox(value=manager.default("convert_cfs_to_cms"),
                                                                 label='CFS to CMS (THIS ONLY WORKS WITHOUT BASE MAX FILE)',
@@ -375,12 +374,12 @@ def launch_interface():
                             lu_file.change(manager.show_mans_n, [lu_file,LU_Manning_n], man_n)
 
                             with gr.Accordion('Bathymetry'):
-                                run_ar_bathy = gr.Checkbox(value=manager.default("run_ar_bathy") or manager.default("use_ar_python"),
-                                                            interactive=False if bool(manager.default("use_ar_python")) else True,
+                                run_ar_bathy = gr.Checkbox(value=manager.default("run_ar_bathy"),
+                                                            interactive=True,
                                                             label='Run AutoRoute Bathymetry?',
-                                                                   )
+                                                            )
                                         
-                                with gr.Row(visible=manager.default("run_ar_bathy") or manager.default("use_ar_python")) as bathy_row:
+                                with gr.Row(visible=manager.default("run_ar_bathy")) as bathy_row:
                                     with gr.Column():
                                         ar_bathy_out_file = gr.Textbox(value=manager.default("BATHY_Out_File"),
                                                     placeholder='/User/Desktop/bathy/',
@@ -395,6 +394,7 @@ def launch_interface():
                                                                 visible=not bool(manager.default("use_ar_python"))
                                                                 )
                                         use_ar_python.change(lambda x: gr.Number(visible=not x), inputs=use_ar_python, outputs=bathy_alpha)
+
                                         da_flow_param = gr.Dropdown(value=manager.default("RAPID_DA_or_Flow_Param"),
                                                                     label='Drainage or Flow Parameter',
                                                                 # info=manager.doc('RAPID_DA_or_Flow_Param'),
@@ -403,6 +403,17 @@ def launch_interface():
                                                                 interactive=True,
                                                                 visible=not bool(manager.default("use_ar_python")))
                                         use_ar_python.change(lambda x: gr.Dropdown(visible=not x), inputs=use_ar_python, outputs=da_flow_param)
+
+                                        bathy_use_banks = gr.Checkbox(value=manager.default("bathy_use_banks"),
+                                                                      interactive=True,
+                                                                      label="Use the bank elevations to calculate the depth of the bathymetry estimate?",
+                                                                      visible=bool(manager.default("use_ar_python")))
+                                        use_ar_python.change(lambda x: gr.Checkbox(visible=x), inputs=use_ar_python, outputs=bathy_use_banks)
+
+                                        find_banks_based_on_lc = gr.Checkbox(value=manager.default("find_banks_based_on_lc"),
+                                                                        interactive=True,
+                                                                        label="Find banks based on land cover, instead of flat spots?",)
+                                        use_ar_python.change(lambda x: gr.Checkbox(visible=x), inputs=use_ar_python, outputs=find_banks_based_on_lc)
 
                                     with gr.Column():
                                         bathy_method = gr.Dropdown(['Trapezoidal'] if bool(manager.default("use_ar_python")) else ['Parabolic', 'Left Bank Quadratic', 'Right Bank Quadratic', 'Double Quadratic', 'Trapezoidal','Triangle'],
@@ -424,7 +435,7 @@ def launch_interface():
                                         bathy_method.change(manager.bathy_changes, [bathy_method, use_ar_python], [bathy_x_max_depth, bathy_y_shallow])
                                 
                                 run_ar_bathy.change(lambda x: gr.Column(visible=x), inputs=run_ar_bathy, outputs=bathy_row)
-                                use_ar_python.change(lambda x, y: (gr.Row(visible=x or y), gr.Checkbox(interactive=not y, value=x or y)), inputs=[run_ar_bathy, use_ar_python], outputs=[bathy_row, run_ar_bathy])
+                                # use_ar_python.change(lambda x, y: (gr.Row(visible=x or y), gr.Checkbox(interactive=not y, value=x or y)), inputs=[run_ar_bathy, use_ar_python], outputs=[bathy_row, run_ar_bathy])
                                 base_max_file.change(manager.update_flow_params, base_max_file, [base_max_id_col, max_flow_column, baseflow_col, da_flow_param])
 
                     with gr.Column():
@@ -541,7 +552,7 @@ def launch_interface():
                           specify_depth, twd_factor, only_streams, use_ar_top_widths, flood_local, depth_map, flood_map, velocity_map, wse_map, fs_bathy_file, da_flow_param,
                           bathy_method,bathy_x_max_depth, bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,
                           data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file, ar_exe, fs_exe, clean_outputs, buffer_distance,
-                          use_ar_python, run_ar_bathy]
+                          use_ar_python, run_ar_bathy, bathy_use_banks, find_banks_based_on_lc, xs_dir]
                 try:
                     run_button.click(manager._run, inputs, dummy)
                 except Exception as e:

@@ -363,12 +363,15 @@ class AutoRoute:
         self.fs_bathy_file = ''
         self.fs_bathy_smooth_method = ''
         self.bathy_twd_factor = 1
+        self.xs_dir = ''
 
         self.top_width_plausible_limit = 600
         self.tw_mult_factor = 1.5
         self.set_depth = 0.
         self.flood_lc_and_stream = False
         self.lc_water_value = -1
+        self.bathy_use_banks = False
+        self.find_banks_based_on_lc = False
 
         if isinstance(yaml_file, dict):
             for key, value in yaml_file.items():
@@ -503,7 +506,7 @@ class AutoRoute:
                          self.curve_file, self.RAPID_Subtract_BaseFlow, self.VDT, self.num_iterations, self.convert_cfs_to_cms, self.x_distance, self.q_limit, self.direction_distance, 
                          self.slope_distance, self.weight_angles, self.use_prev_d_4_xs, self.adjust_flow, self.degree_manip, self.degree_interval, self.man_n, self.low_spot_distance, 
                          self.low_spot_is_meters, self.low_spot_use_box, self.box_size, self.find_flat, self.low_spot_find_flat_cutoff, self.run_bathymetry, self.ar_bathy_file, 
-                         self.bathy_alpha, self.bathy_method, self.bathy_x_max_depth, self.bathy_y_shallow):
+                         self.bathy_alpha, self.bathy_method, self.bathy_x_max_depth, self.bathy_y_shallow, self.bathy_use_banks, self.find_banks_based_on_lc, self.xs_dir):
                 pass
             else:
                 to_run.add(mifn)
@@ -1029,6 +1032,13 @@ class AutoRoute:
         elif not self.USE_PYTHON:
             self._write(output,'Man_n',self.man_n)
 
+        if self.xs_dir:
+            xs_dir = self._format_path(self.xs_dir)
+            xs_dir = os.path.abspath(xs_dir)
+            os.makedirs(xs_dir, exist_ok=True)
+            xs_file = os.path.join(self.xs_dir, f"xs_{os.path.basename(dem).split('.')[0]}.txt")
+            self._write(output,'XS_Out_File',xs_file)
+
         if self.low_spot_distance is not None:
             if self.low_spot_is_meters and not self.USE_PYTHON:
                 self._write(output,'Low_Spot_Dist_m',self.low_spot_distance)
@@ -1043,11 +1053,10 @@ class AutoRoute:
             if self.low_spot_find_flat_cutoff < float('inf'):
                 self._write(output,'Low_Spot_Range_FlowCutoff',self.low_spot_find_flat_cutoff)
 
-        if self.run_bathymetry or self.USE_PYTHON:
+        if self.run_bathymetry:
             self._write(output,'Bathymetry')
             if self.ar_bathy_file:
-                if not os.path.isabs(self.ar_bathy_file):
-                    self.ar_bathy_file = os.path.abspath(self.ar_bathy_file)
+                self.ar_bathy_file = os.path.abspath(self.ar_bathy_file)
                 os.makedirs(self.ar_bathy_file, exist_ok=True)
                 bathy_file = os.path.join(self.ar_bathy_file, f"{os.path.basename(dem).split('.')[0]}__ar_bathy.tif")
             else:
@@ -1075,7 +1084,10 @@ class AutoRoute:
                 else: self._write(output,'Bathymetry_Method', 5)
             else:
                 self._write(output, 'Bathy_Trap_H', self.bathy_x_max_depth)
-
+                if self.bathy_use_banks:
+                    self._write(output, 'Bathy_Use_Banks', self.bathy_use_banks)
+                if self.find_banks_based_on_lc:
+                    self._write(output, 'FindBanksBasedOnLandCover', self.find_banks_based_on_lc)
 
         if self.da_flow_param and not self.USE_PYTHON: self._write(output, 'RAPID_DA_or_Flow_Param',self.da_flow_param)
 
@@ -1246,7 +1258,7 @@ class AutoRoute:
                          self.curve_file, self.RAPID_Subtract_BaseFlow, self.VDT, self.num_iterations, self.convert_cfs_to_cms, self.x_distance, self.q_limit, self.direction_distance, 
                          self.slope_distance, self.weight_angles, self.use_prev_d_4_xs, self.adjust_flow, self.degree_manip, self.degree_interval, self.man_n, self.low_spot_distance, 
                          self.low_spot_is_meters, self.low_spot_use_box, self.box_size, self.find_flat, self.low_spot_find_flat_cutoff, self.run_bathymetry, self.ar_bathy_file, 
-                         self.bathy_alpha, self.bathy_method, self.bathy_x_max_depth, self.bathy_y_shallow)
+                         self.bathy_alpha, self.bathy_method, self.bathy_x_max_depth, self.bathy_y_shallow, self.bathy_use_banks, self.find_banks_based_on_lc, self.xs_dir)
 
     def fs_curve_add_hash(self, mifn: str) -> None:
         out_fld = self.get_item_from_mifn(mifn, 'OutFLD')

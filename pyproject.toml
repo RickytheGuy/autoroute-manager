@@ -12,6 +12,7 @@ dependencies = [
   "geopandas",
   "gdal>=3.8",
   "pyyaml",
+  "plotly",
   "tqdm",
   "contextily",
   "pyproj"

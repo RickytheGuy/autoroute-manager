@@ -175,7 +175,8 @@ class ManagerFacade():
         55. bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,data_dir, minx, 
         60. miny, maxx, maxy, overwrite, buffer, 
         65. crop, vdt_file,  ar_exe, fs_exe, clean_outputs
-        70. buffer_distance, use_ar_python, run_ar_bathy
+        70. buffer_distance, use_ar_python, run_ar_bathy, bathy_use_banks, find_banks_based_on_lc
+        75. xs_dir
         """
         if len(args) < 69: 
             LOG.warning('Could not save parameters')
@@ -258,7 +259,11 @@ class ManagerFacade():
                     "clean_outputs":args[69],
                     "buffer_distance":args[70],
                     "use_ar_python":args[71],
-                    "run_ar_bathy":args[72]
+                    "run_ar_bathy":args[72],
+                    "bathy_use_banks":args[73],
+                    "find_banks_based_on_lc":args[74],
+
+                    "xs_dir":args[75]
                 }
             }
         ]
@@ -270,8 +275,8 @@ class ManagerFacade():
         gr.Info("Parameters saved!")
         return ""
 
-    #@staticmethod
-    def _format_files(self,file_path: str) -> str:
+    @staticmethod
+    def _format_files(file_path: str) -> str:
         """
         Function added so that windows paths that pad with quotation marks can be valid
         """
@@ -282,7 +287,8 @@ class ManagerFacade():
             file_path = file_path[:-1]
         return file_path
 
-    def _write(self,f, Card, Argument = '') -> None:
+    @staticmethod
+    def _write(f, Card, Argument = '') -> None:
         if Argument:
             f.write(f"{Card}\t{Argument}\n")
         else:
@@ -360,8 +366,9 @@ class ManagerFacade():
                                                     low_spot_use_box, box_size, find_flat, low_spot_find_flat_cutoff, degree_manip, degree_interval, tw_mult_factor, set_depth, flood_lc_and_stream, lc_water_value, use_prev_d_4_xs,
                                                     weight_angles, man_n, adjust_flow, bathy_alpha, ar_bathy, id_flow_file, omit_outliers, wse_search_dist, wse_threshold, wse_remove_three,
                                                     specify_depth, twd_factor, only_streams, use_ar_top_widths, flood_local, depth_map, flood_map, velocity_map, wse_map, fs_bathy_file, da_flow_param,
-                                                    bathy_method,bathy_x_max_depth, bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,
-                                                    data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file,  ar_exe, fs_exe, clean_outputs, buffer_distance, use_ar_python, run_ar_bathy) -> str:
+                                                    bathy_method, bathy_x_max_depth, bathy_y_shallow, fs_bathy_smooth_method, bathy_twd_factor,
+                                                    data_dir, minx, miny, maxx, maxy, overwrite, buffer, crop, vdt_file,  ar_exe, fs_exe, clean_outputs, buffer_distance, use_ar_python, run_ar_bathy,
+                                                    bathy_use_banks, find_banks_based_on_lc, xs_dir) -> str:
         """
         Write the main input file
         """
@@ -409,7 +416,8 @@ class ManagerFacade():
                   "FLOODSPREADER": self._format_files(fs_exe),
                   "AUTOROUTE_CONDA_ENV": "autoroute",
 
-                    "curve_file": self._format_files(curve_file),
+                  "xs_dir": self._format_files(xs_dir),
+                  "curve_file": self._format_files(curve_file),
                   "RAPID_Subtract_BaseFlow": subtract_baseflow,
                   "VDT": self._format_files(vdt_file),
                   "num_iterations" : num_iterations,
@@ -456,6 +464,8 @@ class ManagerFacade():
                   "set_depth": set_depth,
                   "flood_lc_and_stream": flood_lc_and_stream,
                   "lc_water_value": lc_water_value,
+                  "bathy_use_banks": bathy_use_banks,
+                  "find_banks_based_on_lc": find_banks_based_on_lc
         }
         self.manager.setup(params)
         self.manager.run()
